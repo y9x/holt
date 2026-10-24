@@ -26,13 +26,31 @@ whichever starts last is the only one running. Until abulxt's deploy stops insta
 takes it again. `activate` disables `abulxt-discord` and, if `holt-discord` does not log in within
 60 s, starts `abulxt-discord` again and fails the deploy.
 
+## Licenses
+
+Every embed needs a license (`src/server/license.ts`): `licensing.secret` in `/opt/holt/config.js` signs
+them, and nothing else does. On amph:
+
+```sh
+cd /opt/holt
+npm run license -- mint --platform nocturne --days 365 --note "Nocturne, annual" > /root/nocturne.license
+npm run license -- inspect "$(cat /root/nocturne.license)"
+```
+
+Hand the license to the site out of band. To revoke one, add its `lid` to `licensing.revoked` and
+restart holt (`systemctl restart holt`); new page loads are refused at once, and an iframe session already
+issued ends within 12 hours. abulxt's own license lives in `/etc/openresty/holt-license.conf` (root, 600),
+included by its `/chat/` location.
+
 ## abulxt's mount
 
 - `/opt/holt/config.js`: the `abulxt` platform is proxy-only (`userState` at
   `http://127.0.0.1:8820/api/auth/me`, `tokenStorageKey: "abulxt:auth-token"`), `chat: true`, path links
   (`/#/account`), origin `https://abstracteducation.loan`.
 - `/etc/openresty/snippets/routes-common.conf` (abulxt repo: `deploy/openresty/snippets/routes-common.conf`):
-  `location ^~ /chat/` -> `http://127.0.0.1:8830/abulxt/`, plus a relative `/chat` redirect.
+  `location ^~ /chat/` -> `http://127.0.0.1:8830/abulxt/`, plus a relative `/chat` redirect. The location
+  includes `/etc/openresty/holt-license.conf` (`proxy_set_header X-Holt-License …`), so OpenResty refuses
+  to start without that file.
 - Proxy pages send `Cross-Origin-Embedder-Policy: credentialless`: abulxt's page is cross-origin isolated
   and may only frame documents that send COEP.
 - Fallback: `client.holtChat: false` in abulxt's config.js renders abulxt's built-in chatbox.

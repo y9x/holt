@@ -10,7 +10,8 @@
     "discord": "tsx src/server/discord-service.ts",
     "typecheck": "tsc -b",
     "test": "node --import tsx --test --test-skip-pattern='^top-level await$' 'src/**/*.test.mjs'",
-    "e2e": "node --import tsx scripts/embed-e2e.mjs"
+    "e2e": "node --import tsx scripts/embed-e2e.mjs",
+    "license": "tsx src/server/license-cli.ts"
   },
   "engines": {
     "node": ">=20.19"

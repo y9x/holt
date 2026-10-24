@@ -5,6 +5,7 @@
 //     Holt.mount({
 //       origin: 'https://holt.example.com',
 //       platform: 'nocturne',
+//       license: 'eyJ…',           // the embed license the holt operator issued for this site
 //       container: document.getElementById('chat'),
 //       // Your backend mints a short-lived identity token for the signed-in user (see docs/PLAN.md,
 //       // "Identity tokens"). Resolve null for a guest.
@@ -28,7 +29,9 @@
     var getToken = typeof options.getToken === 'function' ? options.getToken : function () { return Promise.resolve(null) }
     var origin = options.origin
     var frame = document.createElement('iframe')
-    frame.src = origin + '/embed?platform=' + encodeURIComponent(options.platform)
+    // The site's embed license (issued by the holt operator). Only works for this platform, on its own origins.
+    var license = typeof options.license === 'string' ? '&license=' + encodeURIComponent(options.license) : ''
+    frame.src = origin + '/embed?platform=' + encodeURIComponent(options.platform) + license
     frame.title = options.title || 'Chat'
     frame.setAttribute('allow', 'clipboard-write')
     frame.style.border = '0'

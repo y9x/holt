@@ -28,6 +28,16 @@ export default {
   // Any long random string (48+ characters). Rotating it signs every embed out.
   sessionSecret: 'CHANGE_ME',
 
+  // Embed licensing (src/server/license.ts). Every embed must present a license minted with this secret:
+  // proxy embedding in the X-Holt-License header its proxy adds, iframe embedding via Holt.mount({ license }).
+  // Mint one with `npm run license -- mint --platform <id> [--days <n>] [--note <text>]`.
+  // Revoke one by adding its lid (shown at mint, or by `npm run license -- inspect <license>`) to `revoked`.
+  // Leave the block out to turn licensing off (every configured platform may embed).
+  licensing: {
+    secret: 'CHANGE_ME',
+    revoked: [],
+  },
+
   // Principal keys (`<namespace>:<subject>`) that bypass the chat hierarchy the way site
   // admins do in abulxt today. Never granted from a platform token.
   admins: [],

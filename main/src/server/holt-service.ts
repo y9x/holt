@@ -34,6 +34,7 @@ import { frameAncestors, platformById, platformForOrigin, type Platform } from '
 import { IdentityTokenError, verifyIdentityToken, type Principal } from './identity-token.ts'
 import { issueSession, readSession, SESSION_TTL_SECONDS } from './session.ts'
 import { principalFromPlatform, UserStateUnavailable } from './forward-auth.ts'
+import { checkLicense, type LicenseRefusal } from './license.ts'
 
 type EmbedMode = 'iframe' | 'proxy'
 /** `/<platform id>/<rest>`: proxy embedding. The id grammar matches platforms.ts SLUG. */
@@ -185,6 +186,22 @@ function bearer(request: http.IncomingMessage): string | null {
   return match?.[1] ?? null
 }
 
+/**
+ * Why a request for `platform` is not licensed, or null when it is (or licensing is off). The license
+ * comes from the proxy's X-Holt-License header (proxy embedding) or the page (iframe embedding).
+ */
+function licenseRefusal(config: HoltConfig, platform: Platform, token: string | null | undefined): LicenseRefusal | null {
+  if (!config.licensing) return null
+  const check = checkLicense(config.licensing, platform.id, token)
+  return check.ok ? null : check.reason
+}
+
+const UNLICENSED_TEXT = 'This site is not licensed to embed this chat, or its license has expired or been revoked.'
+
+function headerValue(value: string | string[] | undefined): string | null {
+  return typeof value === 'string' ? value : null
+}
+
 /** A file of the compiled build, or null. Never index.html (only /embed serves it) and never outside dist. */
 async function distFile(pathname: string): Promise<{ file: string; type: string } | null> {
   let decoded: string
@@ -222,6 +239,11 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     const platform = platformById(config.platforms, url.searchParams.get('platform') ?? '')
     if (!platform) return sendText(response, 404, 'text/plain; charset=utf-8', 'unknown platform')
     if (platform.secret === null) return sendText(response, 404, 'text/plain; charset=utf-8', 'this platform embeds by proxy')
+    const refused = licenseRefusal(config, platform, url.searchParams.get('license'))
+    if (refused) {
+      console.warn(`[holt] ${platform.id}: embed refused (license ${refused})`)
+      return sendText(response, 403, 'text/plain; charset=utf-8', UNLICENSED_TEXT)
+    }
     // The browser enforces who may frame this page. X-Frame-Options is left out: CSP supersedes it.
     response.setHeader('Content-Security-Policy', embedCsp(platform, shell, 'iframe'))
     response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -247,6 +269,8 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
       if (!target) return sendJson(response, 404, { error: 'unknown platform' })
       // A page may only exchange tokens for the platform its origin belongs to.
       if (platform && platform.id !== target.id) return sendJson(response, 403, { error: 'origin belongs to another platform' })
+      const refused = licenseRefusal(config, target, typeof body.license === 'string' ? body.license : null)
+      if (refused) return sendJson(response, 403, { error: UNLICENSED_TEXT, code: 'unlicensed' })
       if (typeof body.token !== 'string' || !body.token) return sendJson(response, 400, { error: 'token is required' })
       let principal: Principal
       try {
@@ -282,6 +306,13 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   if (proxied && proxyPlatform) {
     if (!proxyPlatform.userState) return sendText(response, 404, 'text/plain; charset=utf-8', 'this platform embeds by iframe')
     const rest = proxied[2] ?? ''
+    // Everything under /<id>/ needs the platform's license, added by its proxy (the browser never has it).
+    const refused = licenseRefusal(config, proxyPlatform, headerValue(request.headers['x-holt-license']))
+    if (refused) {
+      if (rest === '/' || rest === '') console.warn(`[holt] ${proxyPlatform.id}: proxy page refused (license ${refused})`)
+      if (rest === '/_holt/me') return sendJson(response, 403, { error: UNLICENSED_TEXT, code: 'unlicensed' })
+      return sendText(response, 403, 'text/plain; charset=utf-8', UNLICENSED_TEXT)
+    }
     // `/<id>` without the slash: relative asset URLs would resolve one level too high. Absolute on holt's
     // origin, so nginx's default proxy_redirect turns it back into the platform's own `/chat/`.
     if (rest === '') {

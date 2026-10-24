@@ -4,6 +4,7 @@
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
 import { parsePlatforms, type Platform } from './platforms.ts'
+import { parseLicensing, type LicensingConfig } from './license.ts'
 
 export interface HoltConfig {
   port: number
@@ -11,6 +12,8 @@ export interface HoltConfig {
   sessionSecret: string
   admins: ReadonlySet<string>
   platforms: readonly Platform[]
+  /** Embed licensing (license.ts). Null: off, every configured platform may embed. */
+  licensing: LicensingConfig | null
 }
 
 const DEFAULT_PORT = 8830
@@ -41,5 +44,6 @@ async function readConfig(): Promise<HoltConfig> {
   const admins = new Set(Array.isArray(raw.admins) ? raw.admins.filter((v): v is string => typeof v === 'string') : [])
   const platforms = parsePlatforms(raw.platforms)
   if (platforms.length === 0) throw new Error(`${file}: at least one platform is required`)
-  return { port, publicOrigin, sessionSecret, admins, platforms }
+  const licensing = parseLicensing(raw.licensing, file)
+  return { port, publicOrigin, sessionSecret, admins, platforms, licensing }
 }

@@ -1,6 +1,6 @@
 # Adding holt chat to your site
 
-Two proxy rules. No SDK, no tokens, no secrets, no iframe.
+Two proxy rules and a license. No SDK, no user tokens, no iframe.
 
 ```nginx
 # 1. Your own "who is signed in?" endpoint (any backend route you already have).
@@ -8,12 +8,24 @@ location /chat/api/ {
     proxy_pass http://127.0.0.1:3000/api/;      # -> your app's /api/me
 }
 
-# 2. Everything else under /chat/ is holt. Use your platform id from us.
+# 2. Everything else under /chat/ is holt. Use your platform id and license from us.
 location /chat/ {
     proxy_pass https://holt.abstracteducation.loan/<your-platform-id>/;
     proxy_ssl_server_name on;
+    proxy_set_header X-Holt-License "<your license>";
 }
 ```
+
+## Your license
+
+Embedding needs a license from us. It is a signed token bound to your platform id, with an expiry date
+(or none), that we can revoke. Your proxy adds it to every request it forwards (`X-Holt-License`
+above), so visitors never see it. Without a valid license holt answers 403 to everything under your
+platform, including a direct visit to `holt.abstracteducation.loan/<your-platform-id>/`.
+
+- Keep it out of public repos: it lets a proxy act as your site. Put the `proxy_set_header` line in a
+  file only your server reads (`include /etc/nginx/holt-license.conf;`).
+- When it is renewed, replace the value and reload your proxy. There is nothing else to change.
 
 Open `https://your-site/chat/`. That's it.
 
@@ -63,4 +75,6 @@ trusts anything the page says about who is signed in, and never calls a URL take
 ## Can't proxy? Iframe embedding
 
 Sites that cannot add proxy rules can embed with an iframe and a signed identity token instead (more
-work on your side): see the "Embedding" section of the README.
+work on your side): see the "Embedding" section of the README. The license goes in
+`Holt.mount({ license })`; it is visible in your page there, which is fine: it only works for your
+platform, and only your allowed origins can frame it.

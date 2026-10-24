@@ -67,7 +67,8 @@ export async function exchangeToken(platformId: string, identityToken: string): 
     response = await fetch('/api/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform: platformId, token: identityToken }),
+      // The license the platform's page passed to Holt.mount, carried in this page's own URL.
+      body: JSON.stringify({ platform: platformId, token: identityToken, license: new URLSearchParams(window.location.search).get('license') }),
       credentials: 'omit',
     })
   } catch {

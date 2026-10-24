@@ -20,6 +20,8 @@ going; `VENDOR.md` covers the pipeline borrowed from abulxt; this file says how 
   updating `docs/PLAN.md`.
 - **No cookies or storage for identity.** Sessions are Bearer tokens held in the frame's memory and
   carried through the embed handshake. Inside partner iframes, cookies and storage are third-party.
+- **Licensing stays on.** Every embed path checks `licenseRefusal` (`holt-service.ts`). Never add a route
+  under a platform, or an iframe entry point, that skips it, and never log a license value.
 - **No account UI in holt.** Every account action posts `navigate` with one of the platform's links.
 
 ## Client protection (same rules as abulxt)

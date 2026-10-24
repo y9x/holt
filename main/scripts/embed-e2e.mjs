@@ -22,6 +22,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { signJwt } from '../src/server/jwt.ts'
+import { mintLicense } from '../src/server/license.ts'
 
 const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome'
@@ -47,6 +48,13 @@ const strangerPort = await freePort()
 const holtOrigin = `http://127.0.0.1:${holtPort}`
 const partnerOrigin = `http://localhost:${partnerPort}`
 
+// Licensing is on, as in production: every embed needs a license minted with this secret.
+const LICENSE_SECRET = 'e2e-license-secret-0123456789abcdef0123456789abcdef'
+const license = (platform, options = {}) => mintLicense(LICENSE_SECRET, { platform, ...options })
+const LICENSES = { partner: license('partner').token, proxied: license('proxied').token, tokened: license('tokened').token }
+const REVOKED = license('proxied')
+const EXPIRED = mintLicense(LICENSE_SECRET, { platform: 'proxied', days: 1 }, Date.now() - 2 * 86_400_000)
+
 const tempDir = mkdtempSync(path.join(tmpdir(), 'holt-e2e-'))
 const configFile = path.join(tempDir, 'config.js')
 writeFileSync(configFile, `export default ${JSON.stringify({
@@ -54,6 +62,7 @@ writeFileSync(configFile, `export default ${JSON.stringify({
   publicOrigin: holtOrigin,
   sessionSecret: 'e2e-session-secret-0123456789abcdef0123456789abcdef',
   admins: [],
+  licensing: { secret: LICENSE_SECRET, revoked: [REVOKED.license.lid] },
   platforms: [{
     id: 'partner',
     name: 'Partner',
@@ -98,7 +107,7 @@ function partnerPage(guest) {
 <h1>Partner page</h1><div id="chat"></div>
 <script src="${holtOrigin}/holt-embed.js"></script>
 <script>
-  Holt.mount({ origin: '${holtOrigin}', platform: 'partner', container: document.getElementById('chat'), height: '220px', getToken: () => ${getToken} })
+  Holt.mount({ origin: '${holtOrigin}', platform: 'partner', license: '${LICENSES.partner}', container: document.getElementById('chat'), height: '220px', getToken: () => ${getToken} })
 </script></body></html>`
 }
 
@@ -111,7 +120,8 @@ function proxyToHolt(request, response, rest, platformId = 'proxied') {
     port: holtPort,
     method: request.method,
     path: `/${platformId}/${rest}`,
-    headers: { ...request.headers, host: `127.0.0.1:${holtPort}` },
+    // What the partner's proxy adds: its license (proxy_set_header X-Holt-License …). Overrides any the browser sent.
+    headers: { ...request.headers, host: `127.0.0.1:${holtPort}`, 'x-holt-license': LICENSES[platformId] },
   }, (answer) => {
     response.writeHead(answer.statusCode ?? 502, answer.headers)
     answer.pipe(response)
@@ -313,14 +323,31 @@ try {
     await context.close()
   }
 
+  // Licensing: no license, a revoked one, an expired one, or another platform's license is refused everywhere.
+  {
+    const page = (headers = {}) => fetch(`${holtOrigin}/proxied/`, { headers }).then((r) => r.status)
+    check('license: a proxy page without a license is refused', await page() === 403)
+    check('license: a revoked license is refused', await page({ 'x-holt-license': REVOKED.token }) === 403)
+    check('license: an expired license is refused', await page({ 'x-holt-license': EXPIRED.token }) === 403)
+    check('license: another platform\'s license is refused', await page({ 'x-holt-license': LICENSES.tokened }) === 403)
+    check('license: the platform\'s own license is accepted', await page({ 'x-holt-license': LICENSES.proxied }) === 200)
+    const me = await fetch(`${holtOrigin}/proxied/_holt/me`, { headers: { 'x-holt': '1' } }).then(async (r) => ({ status: r.status, body: await r.json() }))
+    check('license: the identity endpoint is refused without one', me.status === 403 && me.body.code === 'unlicensed', JSON.stringify(me))
+    const embedNoLicense = await fetch(`${holtOrigin}/embed?platform=partner`).then((r) => r.status)
+    check('license: an iframe embed without a license is refused', embedNoLicense === 403, String(embedNoLicense))
+    const session = await fetch(`${holtOrigin}/api/session`, { method: 'POST', headers: { 'content-type': 'application/json', origin: partnerOrigin }, body: JSON.stringify({ platform: 'partner', token: 'x' }) }).then(async (r) => ({ status: r.status, body: await r.json() }))
+    check('license: the identity exchange is refused without one', session.status === 403 && session.body.code === 'unlicensed', JSON.stringify(session))
+  }
+
   // Proxy embedding, straight at holt: identity still comes only from the partner.
   {
-    const me = (headers) => fetch(`${holtOrigin}/proxied/_holt/me`, { headers }).then(async (r) => ({ status: r.status, body: await r.json() }))
+    // Licensed (as the partner's proxy would send), so these test the identity rules, not licensing.
+    const me = (headers) => fetch(`${holtOrigin}/proxied/_holt/me`, { headers: { 'x-holt-license': LICENSES.proxied, ...headers } }).then(async (r) => ({ status: r.status, body: await r.json() }))
     const noHeader = await me({ cookie: 'sid=s_good' })
     check('proxy API: refused without the X-Holt header', noHeader.status === 403, JSON.stringify(noHeader))
     const forged = await me({ 'x-holt': '1', cookie: 'sid=forged' })
     check('proxy API: a cookie the partner does not know is a guest', forged.status === 200 && forged.body.principal === null, JSON.stringify(forged))
-    const coep = await fetch(`${holtOrigin}/proxied/`).then((r) => r.headers.get('cross-origin-embedder-policy'))
+    const coep = await fetch(`${holtOrigin}/proxied/`, { headers: { 'x-holt-license': LICENSES.proxied } }).then((r) => r.headers.get('cross-origin-embedder-policy'))
     check('proxy page: sends COEP so a cross-origin-isolated platform page can frame it', coep === 'credentialless', String(coep))
     const iframeOnly = await fetch(`${holtOrigin}/partner/`).then((r) => r.status)
     check('proxy API: an iframe-only platform has no proxy page', iframeOnly === 404, String(iframeOnly))
@@ -330,7 +357,7 @@ try {
   {
     const page = await browser.newPage()
     const problems = watch(page)
-    await page.goto(`${holtOrigin}/embed?platform=partner`)
+    await page.goto(`${holtOrigin}/embed?platform=partner&license=${encodeURIComponent(LICENSES.partner)}`)
     await page.waitForTimeout(1500)
     const ax = await axText(page)
     check('standalone: says it must be embedded', ax.includes('This chat is meant to be embedded in another site.'), ax.slice(0, 200))

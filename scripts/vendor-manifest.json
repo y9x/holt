@@ -63,6 +63,7 @@
     "main/src/server/chat-models.ts",
     "main/src/server/client-tools.ts",
     "main/src/server/cloudflare-playground.ts",
+    "main/src/server/chat-identity-key.ts",
     "main/src/server/config.ts",
     "main/src/server/db.ts",
     "main/src/server/dev-tunnel.ts",

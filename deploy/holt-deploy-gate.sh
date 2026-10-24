@@ -35,7 +35,7 @@ if [[ ${args[0]:-} == rsync ]]; then
   # Exactly the destinations deploy.sh writes. --delete only where the whole directory is ours, never
   # /opt/holt itself (config.js, node_modules).
   case $dest in
-    /opt/holt/src/ | /opt/holt/dist/ | /opt/holt/loader/ | /opt/holt/chat-api-root/) may_delete=1 ;;
+    /opt/holt/src/ | /opt/holt/dist/ | /opt/holt/loader/ | /opt/holt/chat-api-root/ | /opt/holt/lab/) may_delete=1 ;;
     /opt/holt/ | /opt/holt/deploy/) may_delete=0 ;;
     *) deny ;;
   esac
@@ -61,8 +61,12 @@ if [[ $cmd == activate ]]; then
   install -m 0644 deploy/holt.service /etc/systemd/system/holt.service
   install -m 0644 deploy/holt-discord.service /etc/systemd/system/holt-discord.service
   install -m 0644 deploy/holt-chat.service /etc/systemd/system/holt-chat.service
+  install -m 0644 deploy/holt-lab.service /etc/systemd/system/holt-lab.service
   systemctl daemon-reload
-  systemctl enable holt holt-discord holt-chat >/dev/null 2>&1
+  systemctl enable holt holt-discord holt-chat holt-lab >/dev/null 2>&1
+  # The test partner (lab/server.mjs). Its data lives outside /opt/holt, so a deploy never touches it.
+  install -d -m 700 /opt/holt-lab-data
+  systemctl restart holt-lab
 
   # The chat API first: holt-service proxies to it, and a platform may already route chat traffic here.
   log 'activate: restart holt-chat'

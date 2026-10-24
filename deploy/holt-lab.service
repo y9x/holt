@@ -1,0 +1,18 @@
+[Unit]
+Description=holt lab (test partner site with its own accounts; holt lab/server.mjs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/holt/lab
+Environment=LAB_PORT=8840
+Environment=LAB_DATA=/opt/holt-lab-data
+ExecStart=/usr/bin/node /opt/holt/lab/server.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

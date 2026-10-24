@@ -31,6 +31,11 @@ export interface UserStateConfig {
    * `url` like a cookie. Null: cookies only, and holt never forwards an Authorization header.
    */
   tokenStorageKey: string | null
+  /**
+   * How the platform expects that token on its user-state URL: a header name and whether the value is
+   * `Bearer <token>` (abulxt) or the raw token (nocturne's `X-Noc-Session`). Default: Authorization, bearer.
+   */
+  tokenHeader: { name: string; bearer: boolean }
 }
 
 export interface Platform {
@@ -54,7 +59,12 @@ export interface Platform {
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/
 const ORIGIN = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/i
 const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/
-const FIELD_PATH = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,3}$/
+// A field path ("user.id"), or several separated by `|` (the first present one wins). emailVerified may be
+// negated with `!` ("!user.emailNotice": verified while the platform shows no verify-email notice).
+const FIELD_PATH = /^!?[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,3}(\|[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,3}){0,4}$/
+const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/
+/** Headers holt must never let a platform config redirect a visitor's token into. */
+const FORBIDDEN_TOKEN_HEADERS = new Set(['host', 'cookie', 'content-length', 'transfer-encoding', 'connection', 'x-holt-license', 'x-holt-principal'])
 const STORAGE_KEY = /^[A-Za-z0-9:._-]{1,128}$/
 /** `discord:` and `guest:` are holt's own; a platform may not claim them. */
 const RESERVED_NAMESPACES = new Set(['discord', 'guest', 'holt'])
@@ -119,6 +129,9 @@ function parseUserState(id: string, value: unknown): UserStateConfig | null {
       return name
     })
   }
+  const headerName = (text(raw.tokenHeader) ?? 'authorization').toLowerCase()
+  if (!HEADER_NAME.test(headerName) || FORBIDDEN_TOKEN_HEADERS.has(headerName)) fail(id, 'userState.tokenHeader is not an allowed header name')
+  const tokenHeader = { name: headerName, bearer: headerName === 'authorization' }
   const tokenStorageKey = text(raw.tokenStorageKey)
   if (tokenStorageKey !== null && !STORAGE_KEY.test(tokenStorageKey)) fail(id, 'userState.tokenStorageKey is not a storage key')
   return {
@@ -126,6 +139,7 @@ function parseUserState(id: string, value: unknown): UserStateConfig | null {
     fields: { id: field('id', 'id')!, name: field('name', 'username')!, emailVerified: field('emailVerified', 'email_verified'), avatar: field('avatar', 'avatar') },
     cookies,
     tokenStorageKey,
+    tokenHeader,
   }
 }
 

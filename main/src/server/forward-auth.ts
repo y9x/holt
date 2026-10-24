@@ -57,14 +57,30 @@ export function forwardedCookies(header: string | undefined, allow: readonly str
   return kept.length ? kept.join('; ') : null
 }
 
-function at(record: unknown, path: string | null): unknown {
-  if (path === null) return undefined
+function atPath(record: unknown, path: string): unknown {
   let value = record
   for (const key of path.split('.')) {
     if (typeof value !== 'object' || value === null) return undefined
     value = (value as Record<string, unknown>)[key]
   }
   return value
+}
+
+/** A configured field: `a.b`, or `a.b|c.d` (the first present, non-empty one). */
+function at(record: unknown, path: string | null): unknown {
+  if (path === null) return undefined
+  for (const option of path.replace(/^!/, '').split('|')) {
+    const value = atPath(record, option)
+    if (value !== undefined && value !== null && value !== '') return value
+  }
+  return undefined
+}
+
+/** emailVerified: `true` at the path, or, negated (`!path`), nothing truthy there. */
+function verifiedAt(record: unknown, path: string | null): boolean {
+  if (path === null) return false
+  const value = at(record, path)
+  return path.startsWith('!') ? !value : value === true
 }
 
 /** The principal in one user-state answer, or null for "nobody is signed in". Pure. */
@@ -88,7 +104,7 @@ export function principalFromUserState(platform: Platform, config: UserStateConf
     key: `${platform.identityNamespace}:${id}`,
     platformId: platform.id,
     name: name || id,
-    emailVerified: at(body, config.fields.emailVerified) === true,
+    emailVerified: verifiedAt(body, config.fields.emailVerified),
     avatar,
     tier: null,
   }
@@ -120,10 +136,13 @@ export async function principalFromPlatform(
   if (!config) return null
   const given: ForwardedCredentials = typeof credentials === 'object' ? credentials : { cookie: credentials }
   const cookies = forwardedCookies(given.cookie, config.cookies)
-  const authorization = config.tokenStorageKey && given.authorization && BEARER.test(given.authorization) ? given.authorization : null
-  if (!cookies && !authorization) return null
+  // The page sends a localStorage token to holt as `Authorization: Bearer <token>`; holt passes it on in the
+  // header the platform expects (tokenHeader), as `Bearer <token>` or the raw token.
+  const bearer = config.tokenStorageKey && given.authorization && BEARER.test(given.authorization) ? given.authorization : null
+  const tokenValue = bearer ? (config.tokenHeader.bearer ? bearer : bearer.slice('Bearer '.length)) : null
+  if (!cookies && !tokenValue) return null
 
-  const key = createHash('sha256').update(`${platform.id}\n${cookies ?? ''}\n${authorization ?? ''}`).digest('base64url')
+  const key = createHash('sha256').update(`${platform.id}\n${cookies ?? ''}\n${tokenValue ?? ''}`).digest('base64url')
   const hit = cache.get(key)
   if (hit && hit.expires > now) return hit.principal
 
@@ -133,7 +152,7 @@ export async function principalFromPlatform(
       method: 'GET',
       headers: {
         ...(cookies ? { cookie: cookies } : {}),
-        ...(authorization ? { authorization } : {}),
+        ...(tokenValue ? { [config.tokenHeader.name]: tokenValue } : {}),
         accept: 'application/json',
         'user-agent': 'holt (+https://holt.abstracteducation.loan)',
       },

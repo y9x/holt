@@ -2,7 +2,7 @@ import { query } from './db.js'
 import { loadConfig } from './config.js'
 import { findEnabledModel } from './abstract-relay/models.ts'
 import { getThinking, thinkingFor } from './model-catalog.ts'
-import { loadCandidates } from './abstract-relay/upstream.ts'
+import { loadCandidates, servesModel } from './abstract-relay/upstream.ts'
 import { readWindowSnapshot, recordUsage } from './abstract-relay/store.ts'
 import { checkPreflight, isPlanId, unitsFor, usageLimitMessage } from './abstract-relay/windows.ts'
 import { activeAbstractPlan } from '../abstract-plans.ts'
@@ -70,18 +70,19 @@ async function chatOnlyRouteFor(found: ChatOnlyFound, persona: Persona | null): 
 }
 
 /** The upstream a send goes to: a chat-only model, an Abstract AI model, or null for the platform (and custom) path. */
-function routeFor(identity: Identity, model: string | undefined, thinking: string | undefined): Promise<AbstractRoute | null> {
+function routeFor(identity: Identity, model: string | undefined, thinking: string | undefined, providers: ProviderSet): Promise<AbstractRoute | null> {
   return (model || '').trim().startsWith(CHAT_ONLY_PREFIX)
     ? chatOnlyRoute(model)
-    : abstractRoute(identity, model, thinking)
+    : abstractRoute(identity, model, thinking, providers)
 }
 
 /**
  * A send to an Abstract AI model. No key: the signed-in user's plan decides access,
  * and their 5-hour and weekly windows decide whether this request may run. Null for
- * any other model.
+ * any other model. A persona with a web route (personas/*.json) runs on the Cloudflare
+ * playground; the plan checks and meter are the same as for its API model.
  */
-async function abstractRoute(identity: Identity, model: string | undefined, thinking: string | undefined): Promise<AbstractRoute | null> {
+async function abstractRoute(identity: Identity, model: string | undefined, thinking: string | undefined, providers: ProviderSet): Promise<AbstractRoute | null> {
   const requested = (model || '').trim().toLowerCase()
   if (!requested) return null
   const named = resolveRelayModel(requested)
@@ -111,9 +112,23 @@ async function abstractRoute(identity: Identity, model: string | undefined, thin
   // Admins have no usage limit; their usage is still recorded.
   const check = row?.admin ? { ok: true as const } : checkPreflight({ plan, multiplier: catalogued.multiplier, nowMs: snapshot.nowMs, rows: snapshot.rows })
   if (!check.ok) throw new ops.OpError(429, usageLimitMessage(check.limit))
+  if (named.persona?.cloudflareModel) {
+    // Fails closed: when the playground is off, the send is refused rather than sent to an API upstream.
+    if (!providers.cloudflare) throw new ops.OpError(503, 'That model is not available right now.')
+    return {
+      provider: { ...providers.cloudflare, model: named.persona.cloudflareModel },
+      meter: { userId, model: requested, multiplier: catalogued.multiplier },
+      upstreamModel: named.persona.cloudflareModel,
+      persona: named.persona,
+      // The playground takes no reasoning level, so none is sent.
+      thinking: undefined,
+    }
+  }
   const config = await loadConfig()
-  // Abstract AI models are resold: only a paid OpenAI-protocol upstream serves them.
-  const candidate = loadCandidates(config.ai?.upstreams).find((c) => c.paid && c.protocol === 'openai')
+  // Abstract AI models are resold: only a paid OpenAI-protocol upstream serves them, and one that the config pins
+  // to other models (config models) does not take this one.
+  const relay = loadCandidates(config.ai?.upstreams)
+  const candidate = relay.find((c) => c.paid && c.protocol === 'openai' && servesModel(relay, c, catalogued.id))
   if (!candidate) throw new ops.OpError(503, 'Abstract AI is not configured.')
   // The provider appends /chat/completions, so the base URL must end in /v1.
   const baseUrl = `${candidate.baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '')}/v1`
@@ -399,7 +414,7 @@ async function generate(deps: EngineDeps, identity: Identity, threadId: string, 
   const lim = limitsFor(tierOf(identity), deps.limits)
   // A custom endpoint (ai-settings/) is not the platform plan: no plan access,
   // no weighted quota, and its own provider.
-  const route = custom ? null : await routeFor(identity, model, thinking)
+  const route = custom ? null : await routeFor(identity, model, thinking, deps.providers)
   const modelId = custom ? custom.model : route ? route.upstreamModel : planModelId(model)
   const provider = custom ? custom.provider : route ? route.provider : providerForModel(deps, identity, modelId)
   // Platform models and chat-only models count against the platform's daily cap. An Abstract AI model has

@@ -15,6 +15,8 @@ export type Candidate = {
   paid: boolean
   /** true = chat-only (config `chatOnly`). Never in a relay candidate list; see loadCandidates. */
   chatOnly: boolean
+  /** The model ids this upstream serves (config `models`), or null for no pin. See servesModel. */
+  models: string[] | null
 }
 
 export type Prepared = {
@@ -53,6 +55,14 @@ function validBaseUrl(value: string): boolean {
   } catch {
     return false
   }
+}
+
+/** The `models` pin: null when absent, the ids when a list of non-empty strings, undefined when malformed. */
+function parseModels(raw: unknown): string[] | null | undefined {
+  if (raw === undefined) return null
+  if (!Array.isArray(raw)) return undefined
+  const ids = raw.map((id) => (typeof id === 'string' ? id.trim() : ''))
+  return ids.every(Boolean) ? ids : undefined
 }
 
 /**
@@ -94,7 +104,12 @@ export function parseUpstreams(raw: unknown): Candidate[] {
     const paid = entry.paid === true
     // Fails closed: only an absent or explicit false keeps an upstream relay-eligible.
     const chatOnly = entry.chatOnly !== undefined && entry.chatOnly !== false
-    out.push({ candidate: { name, baseUrl, apiKey, protocol, priority, paid, chatOnly }, index })
+    const models = parseModels(entry.models)
+    if (models === undefined) {
+      console.warn(`abstract-relay: upstream "${name}" has an invalid models list; skipped`)
+      return
+    }
+    out.push({ candidate: { name, baseUrl, apiKey, protocol, priority, paid, chatOnly, models }, index })
   })
   return out
     .sort((a, b) => a.candidate.priority - b.candidate.priority || a.index - b.index)
@@ -107,6 +122,16 @@ export function parseUpstreams(raw: unknown): Candidate[] {
  */
 export function loadCandidates(raw: unknown): Candidate[] {
   return parseUpstreams(raw).filter((candidate) => !candidate.chatOnly)
+}
+
+/**
+ * Whether a relay candidate may serve `model`. An entry with `models` serves exactly those ids. An id that any entry
+ * lists is pinned: only the entries that list it serve it, so a pinned model never fails over to another upstream.
+ * Every other id is served by the entries without `models`. `all` is the relay list (loadCandidates).
+ */
+export function servesModel(all: Candidate[], candidate: Candidate, model: string): boolean {
+  if (candidate.models) return candidate.models.includes(model)
+  return !all.some((other) => other.models?.includes(model))
 }
 
 /** Base URL without a trailing /v1, then the request path (upstreamURL, proxy.go:469-475). */

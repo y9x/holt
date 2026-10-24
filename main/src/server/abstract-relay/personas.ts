@@ -16,6 +16,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, basename, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isCloudflareModelId } from '../../cloudflare-models.ts'
 
 /**
  * The priming exchange injected after the system prompt on every request. `user` is the primed request, and
@@ -41,6 +42,8 @@ export interface Persona {
   /** The priming assistant turn, or null when the persona has none. */
   primer: PersonaPrimer | null
   description: string
+  /** Web chat sends this persona to the Cloudflare playground as this model slug. Null: the base model's upstream. */
+  cloudflareModel: string | null
 }
 
 /** Static aliases: house names that route to an upstream model without a persona prompt. */
@@ -63,6 +66,22 @@ function parsePrimer(raw: unknown): PersonaPrimer | null {
   }
 }
 
+/**
+ * The `routes` block: `{ "web": { "provider": "cloudflare", "model": "@cf/..." } }` sends web chat to the Cloudflare
+ * playground. The API is not named here: /v1 uses the upstream that pins the base model (config `models`).
+ * Returns the model slug, null when there is no web route, or undefined when the block is malformed.
+ */
+function parseWebRoute(raw: unknown): string | null | undefined {
+  if (raw === undefined) return null
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const web = (raw as { web?: unknown }).web
+  if (web === undefined) return null
+  if (typeof web !== 'object' || web === null) return undefined
+  const { provider, model } = web as { provider?: unknown; model?: unknown }
+  if (provider !== 'cloudflare' || typeof model !== 'string' || !isCloudflareModelId(model)) return undefined
+  return model
+}
+
 // Persona cache, loaded once on first access.
 let personaCache: Map<string, Persona> | null = null
 
@@ -83,13 +102,16 @@ function loadPersonas(): Map<string, Persona> {
     const name = basename(entry, '.json').toLowerCase()
     try {
       const raw = JSON.parse(readFileSync(join(personasDir(), entry), 'utf8'))
-      if (typeof raw.base_model === 'string' && raw.base_model && typeof raw.system === 'string' && raw.system) {
+      const cloudflareModel = parseWebRoute(raw.routes)
+      // A malformed route skips the persona: it must not fall back to another provider.
+      if (typeof raw.base_model === 'string' && raw.base_model && typeof raw.system === 'string' && raw.system && cloudflareModel !== undefined) {
         map.set(name, {
           name,
           baseModel: raw.base_model,
           system: raw.system,
           primer: parsePrimer(raw.primer),
           description: typeof raw.description === 'string' ? raw.description : '',
+          cloudflareModel,
         })
       }
     } catch {

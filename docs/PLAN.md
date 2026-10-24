@@ -115,6 +115,12 @@ and keeps abulxt's chat working; steps marked ⚠ change production data or traf
    **Steps 1-2 done 2026-10-24** (abulxt 219480c8): `WebhookTarget` `ext` kind + `WebhookSubject.extKey`;
    bans, timeouts, untimeouts and member overwrites match it (fail closed); `abulxt:<n>` parses as the site
    account. Writes of `ext` rows wait for step 3's CHECK widening and fail loudly until then.
+   **Step 3 done 2026-10-24.** Migration 036 (abulxt 391bbf64) widened the subject_type CHECKs to allow
+   'ext'. Migration 037 (abulxt 3f1e989c) rewrote chat identity keys `user:<n>` -> `abulxt:<n>` in
+   message authors, reactors and onboarding state; `server/chat-identity-key.ts` writes the new form
+   and reads both. Account event channels, rate limits and AI chat thread ownership keep `user:<n>`
+   (they are not chat identity). Backup: amph `/root/db-backups/abulxt-before-036-20261024082628.dump`.
+   Next: step 4 (holt serves the chat API).
 1. *Identity seam in abulxt.* A `ChatIdentity` (`key`, `name`, `emailVerified`, `siteAdmin`, `tierFloor`,
    `discordId?`, `createdAt`, `avatarUrl`) built from `DbUser` in one adapter; every chat route,
    `writeDenialCore`, `chatPermsForUser`, onboarding, presence and `rt-api` take it instead of `DbUser`.

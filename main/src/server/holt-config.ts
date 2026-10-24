@@ -4,7 +4,8 @@
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
 import { parsePlatforms, type Platform } from './platforms.ts'
-import { parseLicensing, type LicensingConfig } from './license.ts'
+import { parseLicensing, readLicense, type LicensingConfig } from './license.ts'
+import { parseBridge, type BridgeEntry } from './bridge-config.ts'
 
 export interface HoltConfig {
   port: number
@@ -14,6 +15,8 @@ export interface HoltConfig {
   platforms: readonly Platform[]
   /** Embed licensing (license.ts). Null: off, every configured platform may embed. */
   licensing: LicensingConfig | null
+  /** The `bridge` key (bridge-config.ts): per platform, its license and its guild. Null = legacy config. */
+  bridge: BridgeEntry[] | null
 }
 
 const DEFAULT_PORT = 8830
@@ -45,5 +48,15 @@ async function readConfig(): Promise<HoltConfig> {
   const platforms = parsePlatforms(raw.platforms)
   if (platforms.length === 0) throw new Error(`${file}: at least one platform is required`)
   const licensing = parseLicensing(raw.licensing, file)
-  return { port, publicOrigin, sessionSecret, admins, platforms, licensing }
+  const bridge = parseBridge(raw.bridge)
+  for (const entry of bridge ?? []) {
+    if (!platforms.some((platform) => platform.id === entry.platform)) throw new Error(`${file}: bridge.${entry.platform} names no platform`)
+    if (entry.license === null) continue
+    if (!licensing) throw new Error(`${file}: bridge.${entry.platform}.license needs licensing.secret`)
+    // A pasted token that is not ours, or another platform's, fails here rather than at a visitor's first request.
+    const license = readLicense(licensing.secret, entry.license)
+    if (!license) throw new Error(`${file}: bridge.${entry.platform}.license is not a license signed by this holt`)
+    if (license.platform !== entry.platform) throw new Error(`${file}: bridge.${entry.platform}.license is ${license.platform}'s license`)
+  }
+  return { port, publicOrigin, sessionSecret, admins, platforms, licensing, bridge }
 }

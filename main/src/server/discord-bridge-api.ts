@@ -59,6 +59,7 @@ import { guildTagProfile } from './discord-guild-tag.js'
 import { approvedAvatarUrlForUser } from './avatar-store.ts'
 import { handleOnboardingRequest, isOnboardingRoute } from './discord-onboarding-api.js'
 import { siteChatKey, siteChatKeys, siteIdOfChatKey } from './chat-identity-key.ts'
+import { bridgeTargets } from './bridge-config.ts'
 import {
   channelAccess,
   configuredGuildId,
@@ -999,8 +1000,8 @@ export function discordBridgeApi(): Plugin {
       if (path === 'channels') {
         if (req.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed' })
         const config = await loadConfig()
-        const configured = Boolean(config.discord?.botToken
-          && ((config.discord?.bridgeChannels || []).length || (config.discord?.bridgeCategories || []).length))
+        const targets = bridgeTargets(config as Parameters<typeof bridgeTargets>[0])
+        const configured = Boolean(config.discord?.botToken && (targets.channelIds.length || targets.categoryIds.length))
         // One bridged guild's sidebar (`guild` REQUIRED, validated against
         // the bridged guild set).
         const guildId = await bridgedGuildParam(url.searchParams.get('guild'))

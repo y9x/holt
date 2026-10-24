@@ -9,10 +9,23 @@ import './embed.css'
 // A chat platform gets the full chatbox; every other platform gets the identity shell (App).
 const ChatMount = lazy(() => import('../chat-mount').then((module) => ({ default: module.ChatMount })))
 
+/**
+ * Each site's chatbox opens on its own guild: on a first visit (nothing remembered yet) holt seeds the
+ * chatbox's "last guild" with the site's guild. After that the user's own choice is remembered as usual,
+ * and every bridged guild stays in the server rail.
+ */
+function seedHomeGuild(guild: string | null): void {
+  if (!guild) return
+  try {
+    if (!localStorage.getItem('abulxt:chat-last-guild')) localStorage.setItem('abulxt:chat-last-guild', guild)
+  } catch { /* storage blocked: the chatbox opens its first guild */ }
+}
+
 loadDecryptionKey()
 
 const root = createRoot(document.getElementById('root')!)
 const platform = readPlatform()
+if (platform?.chat) seedHomeGuild(platform.homeGuild)
 root.render(
   <StrictMode>
     {platform?.chat ? (

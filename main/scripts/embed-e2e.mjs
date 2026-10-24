@@ -54,6 +54,8 @@ const license = (platform, options = {}) => mintLicense(LICENSE_SECRET, { platfo
 const LICENSES = { partner: license('partner').token, proxied: license('proxied').token, tokened: license('tokened').token }
 const REVOKED = license('proxied')
 const EXPIRED = mintLicense(LICENSE_SECRET, { platform: 'proxied', days: 1 }, Date.now() - 2 * 86_400_000)
+// Signed by this holt for `proxied`, but not listed in `bridge`: the register refuses it.
+const UNREGISTERED = license('proxied')
 
 const tempDir = mkdtempSync(path.join(tmpdir(), 'holt-e2e-'))
 const configFile = path.join(tempDir, 'config.js')
@@ -63,6 +65,8 @@ writeFileSync(configFile, `export default ${JSON.stringify({
   sessionSecret: 'e2e-session-secret-0123456789abcdef0123456789abcdef',
   admins: [],
   licensing: { secret: LICENSE_SECRET, revoked: [REVOKED.license.lid] },
+  // The license register (bridge-config.ts): only these licenses count.
+  bridge: { partner: { license: LICENSES.partner }, proxied: { license: LICENSES.proxied }, tokened: { license: LICENSES.tokened } },
   platforms: [{
     id: 'partner',
     name: 'Partner',
@@ -329,6 +333,7 @@ try {
     check('license: a proxy page without a license is refused', await page() === 403)
     check('license: a revoked license is refused', await page({ 'x-holt-license': REVOKED.token }) === 403)
     check('license: an expired license is refused', await page({ 'x-holt-license': EXPIRED.token }) === 403)
+    check('license: a signed but unregistered license is refused (bridge is the register)', await page({ 'x-holt-license': UNREGISTERED.token }) === 403)
     check('license: another platform\'s license is refused', await page({ 'x-holt-license': LICENSES.tokened }) === 403)
     check('license: the platform\'s own license is accepted', await page({ 'x-holt-license': LICENSES.proxied }) === 200)
     const me = await fetch(`${holtOrigin}/proxied/_holt/me`, { headers: { 'x-holt': '1' } }).then(async (r) => ({ status: r.status, body: await r.json() }))

@@ -38,6 +38,23 @@ export default {
     revoked: [],
   },
 
+  // The bridge (src/server/bridge-config.ts): one entry per platform, with its embed license and the
+  // Discord guild its chatbox belongs to, plus what is bridged from that guild.
+  //   license     The platform's license token (`npm run license -- mint ...`). With a `bridge` key, holt
+  //               honours ONLY licenses listed here: this is the register of who is licensed. Revoke by
+  //               deleting the line (or listing its lid in licensing.revoked).
+  //   guild       The guild this site's chatbox opens on. Every bridged guild still shows in the server
+  //               rail, so users can switch and chat in each.
+  //   channels    Individual text/announcement channels of that guild.
+  //   categories  Every text channel in these categories of that guild (also ones added later).
+  // A channel or category that is not in the entry's guild is skipped (logged), never bridged elsewhere.
+  // Replaces discord.bridgeChannels / discord.bridgeCategories, which are read only when `bridge` is absent.
+  bridge: {
+    abulxt: { license: 'CHANGE_ME', guild: '000000000000000000', channels: [], categories: [] },
+    abstract: { license: 'CHANGE_ME' },
+    nocturne: { license: 'CHANGE_ME' },
+  },
+
   // Principal keys (`<namespace>:<subject>`) that bypass the chat hierarchy the way site
   // admins do in abulxt today. Never granted from a platform token.
   admins: [],

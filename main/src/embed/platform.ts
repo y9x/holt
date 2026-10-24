@@ -18,6 +18,8 @@ export interface EmbedPlatform {
   tokenStorageKey: string | null
   /** Proxy mode: render the full chatbox (the platform's origin serves the chat API). */
   chat: boolean
+  /** The guild this site's chatbox opens on first, or null. */
+  homeGuild: string | null
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -35,7 +37,7 @@ export function readPlatform(): EmbedPlatform | null {
     return null
   }
   if (typeof raw !== 'object' || raw === null) return null
-  const { id, name, mode, origins, links, tokenStorageKey, chat } = raw as Record<string, unknown>
+  const { id, name, mode, origins, links, tokenStorageKey, chat, homeGuild } = raw as Record<string, unknown>
   if (typeof id !== 'string' || typeof name !== 'string' || !Array.isArray(origins)) return null
   const linkObject = (typeof links === 'object' && links !== null ? links : {}) as Record<string, unknown>
   return {
@@ -51,5 +53,6 @@ export function readPlatform(): EmbedPlatform | null {
     },
     tokenStorageKey: mode === 'proxy' && typeof tokenStorageKey === 'string' && tokenStorageKey ? tokenStorageKey : null,
     chat: mode === 'proxy' && chat === true,
+    homeGuild: typeof homeGuild === 'string' && /^\d{15,22}$/.test(homeGuild) ? homeGuild : null,
   }
 }

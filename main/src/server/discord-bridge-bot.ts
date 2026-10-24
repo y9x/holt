@@ -24,7 +24,6 @@ import { type DiscordApiUserRaw } from './discord-channel-access.js'
 import {
   CATEGORY_CHANNEL_TYPE,
   changedGuilds,
-  configuredIds,
   everyoneCanView,
   layoutSignatures,
   overwritesKey,
@@ -34,6 +33,7 @@ import {
 } from './discord-bridge-categories.js'
 import { absoluteAvatarUrl, isApprovedSha, shaFromAvatarUrl } from './avatar-store.js'
 import { componentsFromRaw, interactionFromRaw, MessageFlag } from './discord-interactions.js'
+import { bridgeTargets, inExpectedGuild } from './bridge-config.ts'
 
 // Bridges guild text/announcement channels with the site chatbox, across
 // every guild the bot is in: each channel inside a configured category
@@ -1025,9 +1025,10 @@ interface BridgeResolution {
 // Resolve config.discord.bridgeCategories + bridgeChannels into the channels
 // to bridge, from the gateway cache (REST for anything uncached).
 async function resolveBridgeSet(client: Client): Promise<BridgeResolution> {
-  const d = getConfig().discord || {}
-  const legacyIds = configuredIds(d.bridgeChannels)
-  const categoryIds = configuredIds(d.bridgeCategories)
+  // `bridge` (a guild per platform) when present, else the legacy discord.bridgeChannels/Categories.
+  const targets = bridgeTargets(getConfig() as Parameters<typeof bridgeTargets>[0])
+  const legacyIds = targets.channelIds
+  const categoryIds = targets.categoryIds
   let complete = true
   const watchGuildIds = new Set<string>()
   const candidates: BridgeTextChannel[] = []
@@ -1045,6 +1046,11 @@ async function resolveBridgeSet(client: Client): Promise<BridgeResolution> {
     if (!isBridgeTextChannel(channel)) {
       unresolvedLegacyIds.add(id)
       warnOnce(id, `bridge channel ${id} is not a guild text/announcement channel - skipping`)
+      continue
+    }
+    if (!inExpectedGuild(targets, id, channel.guildId)) {
+      unresolvedLegacyIds.add(id)
+      warnOnce(id, `bridge channel ${id} is in guild ${channel.guildId}, not the guild its bridge entry names - skipping`)
       continue
     }
     watchGuildIds.add(channel.guildId)
@@ -1066,6 +1072,11 @@ async function resolveBridgeSet(client: Client): Promise<BridgeResolution> {
       continue
     }
     const guild = category.guild
+    if (!inExpectedGuild(targets, id, guild.id)) {
+      unresolvedCategoryIds.add(id)
+      warnOnce(id, `bridge category ${id} is in guild ${guild.id}, not the guild its bridge entry names - skipping`)
+      continue
+    }
     watchGuildIds.add(guild.id)
     // A category that wasn't cached: make sure its guild's channels are.
     if (!cached) await guild.channels.fetch().catch(() => { complete = false })
@@ -1223,12 +1234,9 @@ async function applyBridgeSetOnce(client: Client, reason: string): Promise<void>
 // (including the first resolution): discord-service registers /bridge there
 // and re-syncs chat roles.
 export async function startBridge(client: Client, opts: { onGuildsChanged?: (guildIds: string[]) => void } = {}): Promise<void> {
-  const config = getConfig()
-  const d = config.discord || {}
-  const legacyIds = configuredIds(d.bridgeChannels)
-  const categoryIds = configuredIds(d.bridgeCategories)
-  if (!legacyIds.length && !categoryIds.length) {
-    console.log('[abulxt-discord] discord.bridgeCategories / bridgeChannels not configured - site chatbox bridge disabled.')
+  const startTargets = bridgeTargets(getConfig() as Parameters<typeof bridgeTargets>[0])
+  if (!startTargets.channelIds.length && !startTargets.categoryIds.length) {
+    console.log('[abulxt-discord] nothing to bridge (bridge / discord.bridgeChannels / discord.bridgeCategories) - site chatbox bridge disabled.')
     return
   }
 
@@ -1248,7 +1256,7 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
   }
 
   await applyBridgeSet(client, 'startup')
-  if (!runtime.channels.size && !categoryIds.length) {
+  if (!runtime.channels.size && !startTargets.categoryIds.length) {
     console.error('[abulxt-discord] no usable bridge channels - site chatbox bridge disabled.')
     runtime = null
     return

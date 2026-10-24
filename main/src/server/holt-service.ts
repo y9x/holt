@@ -35,7 +35,8 @@ import { frameAncestors, platformById, platformForOrigin, type Platform } from '
 import { IdentityTokenError, verifyIdentityToken, type Principal } from './identity-token.ts'
 import { issueSession, readSession, SESSION_TTL_SECONDS } from './session.ts'
 import { principalFromPlatform, UserStateUnavailable } from './forward-auth.ts'
-import { checkLicense, type LicenseRefusal } from './license.ts'
+import { checkLicense, readLicense, type LicenseRefusal } from './license.ts'
+import { registeredLicenses } from './bridge-config.ts'
 
 type EmbedMode = 'iframe' | 'proxy'
 /** `/<platform id>/<rest>`: proxy embedding. The id grammar matches platforms.ts SLUG. */
@@ -91,15 +92,16 @@ function loadEmbedShell(): EmbedShell {
 }
 
 /** The platform data block for one embed page. `<` is escaped so the JSON can never close the tag. */
-function platformBlock(platform: Platform, mode: EmbedMode): string {
+function platformBlock(platform: Platform, mode: EmbedMode, homeGuild: string | null = null): string {
   // tokenStorageKey is a key name, not a secret: the page reads the token itself on the platform's origin.
   const tokenStorageKey = mode === 'proxy' ? platform.userState?.tokenStorageKey ?? null : null
-  const data = JSON.stringify({ id: platform.id, name: platform.name, mode, origins: platform.allowedOrigins, links: platform.links, tokenStorageKey, chat: mode === 'proxy' && platform.chat })
+  // homeGuild: the guild this site's chatbox opens on first (bridge.<platform>.guild).
+  const data = JSON.stringify({ id: platform.id, name: platform.name, mode, origins: platform.allowedOrigins, links: platform.links, tokenStorageKey, chat: mode === 'proxy' && platform.chat, homeGuild })
   return `<script type="application/json" id="holt-platform">${data.replace(/</g, '\\u003c')}</script>`
 }
 
-function pageHtml(shell: EmbedShell, platform: Platform, mode: EmbedMode): string {
-  const block = platformBlock(platform, mode)
+function pageHtml(shell: EmbedShell, platform: Platform, mode: EmbedMode, homeGuild: string | null = null): string {
+  const block = platformBlock(platform, mode, homeGuild)
   return shell.html.includes('</head>') ? shell.html.replace('</head>', `${block}\n</head>`) : block + shell.html
 }
 
@@ -194,7 +196,12 @@ function bearer(request: http.IncomingMessage): string | null {
 function licenseRefusal(config: HoltConfig, platform: Platform, token: string | null | undefined): LicenseRefusal | null {
   if (!config.licensing) return null
   const check = checkLicense(config.licensing, platform.id, token)
-  return check.ok ? null : check.reason
+  if (!check.ok) return check.reason
+  // With a `bridge` key, the config is the license register: only a license listed for this platform counts.
+  const registered = registeredLicenses(config.bridge, platform.id)
+  if (registered === null) return null
+  const lids = registered.map((t) => readLicense(config.licensing!.secret, t)?.lid).filter(Boolean)
+  return lids.includes(check.license.lid) ? null : 'revoked'
 }
 
 const UNLICENSED_TEXT = 'This site is not licensed to embed this chat, or its license has expired or been revoked.'
@@ -369,7 +376,8 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
       // credentialless changes nothing for a page opened directly or framed by a site without COEP.
       response.setHeader('Cross-Origin-Embedder-Policy', 'credentialless')
       response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
-      return sendText(response, 200, 'text/html; charset=utf-8', pageHtml(shell, proxyPlatform, 'proxy'))
+      const homeGuild = config.bridge?.find((entry) => entry.platform === proxyPlatform.id)?.guild ?? null
+      return sendText(response, 200, 'text/html; charset=utf-8', pageHtml(shell, proxyPlatform, 'proxy', homeGuild))
     }
     if (rest.startsWith(CHAT_API_PREFIX)) {
       if (!proxyPlatform.chat) return sendJson(response, 404, { error: 'not found' })

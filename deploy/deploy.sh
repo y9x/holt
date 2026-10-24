@@ -25,10 +25,12 @@ send --delete "$ROOT/main/dist/" "$TARGET:$REMOTE/dist/"
 echo "==> partner loader"
 send --delete "$ROOT/main/loader/" "$TARGET:$REMOTE/loader/"
 echo "==> package manifest, schema, units"
-send "$ROOT/main/package.json" "$ROOT/main/package-lock.json" "$TARGET:$REMOTE/"
+send "$ROOT/main/package.json" "$ROOT/main/package-lock.json" "$ROOT/main/vite.chat.config.ts" "$TARGET:$REMOTE/"
+echo "==> chat API preview root"
+send --delete "$ROOT/main/chat-api-root/" "$TARGET:$REMOTE/chat-api-root/"
 # The bot runs ensureSchema() on start (vendored db.ts); it looks for schema.sql in its cwd.
 send "$ROOT/schema.sql" "$TARGET:$REMOTE/"
-send "$ROOT/deploy/holt.service" "$ROOT/deploy/holt-discord.service" "$TARGET:$REMOTE/deploy/"
+send "$ROOT/deploy/holt.service" "$ROOT/deploy/holt-discord.service" "$ROOT/deploy/holt-chat.service" "$TARGET:$REMOTE/deploy/"
 
 echo "==> activate"
 $SSH "$TARGET" activate

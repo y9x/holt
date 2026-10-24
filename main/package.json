@@ -11,7 +11,8 @@
     "typecheck": "tsc -b",
     "test": "node --import tsx --test --test-skip-pattern='^top-level await$' 'src/**/*.test.mjs'",
     "e2e": "node --import tsx scripts/embed-e2e.mjs",
-    "license": "tsx src/server/license-cli.ts"
+    "license": "tsx src/server/license-cli.ts",
+    "chat-api": "vite preview --config vite.chat.config.ts"
   },
   "engines": {
     "node": ">=20.19"

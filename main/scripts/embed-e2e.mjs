@@ -349,6 +349,9 @@ try {
     check('proxy API: a cookie the partner does not know is a guest', forged.status === 200 && forged.body.principal === null, JSON.stringify(forged))
     const coep = await fetch(`${holtOrigin}/proxied/`, { headers: { 'x-holt-license': LICENSES.proxied } }).then((r) => r.headers.get('cross-origin-embedder-policy'))
     check('proxy page: sends COEP so a cross-origin-isolated platform page can frame it', coep === 'credentialless', String(coep))
+    const chatApi = (headers = {}) => fetch(`${holtOrigin}/proxied/_holt/api/discord/bridge/guilds`, { headers }).then((r) => r.status)
+    check('chat API route: refused without a license', await chatApi() === 403)
+    check('chat API route: not offered to a platform without chat', await chatApi({ 'x-holt-license': LICENSES.proxied }) === 404)
     const iframeOnly = await fetch(`${holtOrigin}/partner/`).then((r) => r.status)
     check('proxy API: an iframe-only platform has no proxy page', iframeOnly === 404, String(iframeOnly))
   }

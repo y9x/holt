@@ -12,6 +12,7 @@
 //
 //   GET  /<id>/                       The chat page, top-level on the platform's site.
 //   GET  /<id>/_holt/me               { principal | null, links }. Needs `X-Holt: 1`.
+//   *    /<id>/_holt/api/discord/bridge/*  The chat API (chat platforms), proxied to holt-chat.
 //   GET  /<id>/assets/*               The compiled build (relative URLs, so any proxy path works).
 //
 // Iframe embedding (identity tokens, for sites that cannot proxy):
@@ -202,6 +203,43 @@ function headerValue(value: string | string[] | undefined): string | null {
   return typeof value === 'string' ? value : null
 }
 
+const CHAT_API_ORIGIN = { host: '127.0.0.1', port: 8831 }
+const CHAT_API_PREFIX = '/_holt/api/discord/bridge/'
+/** Hop-by-hop headers, and holt's own license header, never go upstream. */
+const NOT_FORWARDED = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer', 'x-holt-license'])
+
+/**
+ * The chat API for a chat platform: /<id>/_holt/api/discord/bridge/* -> holt-chat /api/discord/bridge/*
+ * (vite.chat.config.ts). Called after the license check. The platform's proxy set the client address
+ * headers (X-Real-IP, X-Forwarded-For, CF-Connecting-IP); they pass through, because the bridge uses
+ * them for IP bans and rate limits.
+ */
+function proxyChatApi(request: http.IncomingMessage, response: http.ServerResponse, upstreamPath: string): Promise<void> {
+  return new Promise((resolve) => {
+    const headers: http.OutgoingHttpHeaders = {}
+    for (const [name, value] of Object.entries(request.headers)) {
+      if (value !== undefined && !NOT_FORWARDED.has(name)) headers[name] = value
+    }
+    headers.host = `${CHAT_API_ORIGIN.host}:${CHAT_API_ORIGIN.port}`
+    const upstream = http.request({ ...CHAT_API_ORIGIN, method: request.method, path: upstreamPath, headers }, (answer) => {
+      const out: http.OutgoingHttpHeaders = {}
+      for (const [name, value] of Object.entries(answer.headers)) {
+        if (value !== undefined && !NOT_FORWARDED.has(name)) out[name] = value
+      }
+      response.writeHead(answer.statusCode ?? 502, out)
+      answer.pipe(response)
+      answer.on('end', resolve)
+    })
+    upstream.on('error', (error) => {
+      console.warn(`[holt] chat API unreachable: ${error.message}`)
+      if (!response.headersSent) sendJson(response, 502, { error: 'The chat service is unavailable right now.' })
+      else response.end()
+      resolve()
+    })
+    request.pipe(upstream)
+  })
+}
+
 /** A file of the compiled build, or null. Never index.html (only /embed serves it) and never outside dist. */
 async function distFile(pathname: string): Promise<{ file: string; type: string } | null> {
   let decoded: string
@@ -330,6 +368,10 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
       response.setHeader('Cross-Origin-Embedder-Policy', 'credentialless')
       response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
       return sendText(response, 200, 'text/html; charset=utf-8', pageHtml(shell, proxyPlatform, 'proxy'))
+    }
+    if (rest.startsWith(CHAT_API_PREFIX)) {
+      if (!proxyPlatform.chat) return sendJson(response, 404, { error: 'not found' })
+      return proxyChatApi(request, response, `/api/discord/bridge/${rest.slice(CHAT_API_PREFIX.length)}${url.search}`)
     }
     if (rest === '/_holt/me') {
       if (method !== 'GET') return sendJson(response, 405, { error: 'method not allowed' })

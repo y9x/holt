@@ -35,7 +35,7 @@ if [[ ${args[0]:-} == rsync ]]; then
   # Exactly the destinations deploy.sh writes. --delete only where the whole directory is ours, never
   # /opt/holt itself (config.js, node_modules).
   case $dest in
-    /opt/holt/src/ | /opt/holt/dist/ | /opt/holt/loader/) may_delete=1 ;;
+    /opt/holt/src/ | /opt/holt/dist/ | /opt/holt/loader/ | /opt/holt/chat-api-root/) may_delete=1 ;;
     /opt/holt/ | /opt/holt/deploy/) may_delete=0 ;;
     *) deny ;;
   esac
@@ -60,8 +60,20 @@ if [[ $cmd == activate ]]; then
   npm ci --no-audit --no-fund --loglevel=error
   install -m 0644 deploy/holt.service /etc/systemd/system/holt.service
   install -m 0644 deploy/holt-discord.service /etc/systemd/system/holt-discord.service
+  install -m 0644 deploy/holt-chat.service /etc/systemd/system/holt-chat.service
   systemctl daemon-reload
-  systemctl enable holt holt-discord >/dev/null 2>&1
+  systemctl enable holt holt-discord holt-chat >/dev/null 2>&1
+
+  # The chat API first: holt-service proxies to it, and a platform may already route chat traffic here.
+  log 'activate: restart holt-chat'
+  systemctl restart holt-chat
+  for _ in $(seq 1 60); do
+    [[ $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8831/api/discord/bridge/guilds) == 200 ]] && break
+    sleep 0.5
+  done
+  if [[ $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8831/api/discord/bridge/guilds) != 200 ]]; then
+    log 'holt-chat did not become healthy'; journalctl -u holt-chat -n 30 --no-pager >&2; exit 1
+  fi
 
   log 'activate: restart holt'
   systemctl restart holt

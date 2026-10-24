@@ -101,7 +101,8 @@
     "main/src/server/abstract-relay/personas/evilcoder-epsilon.json",
     "main/src/server/abstract-relay/personas/evilcoder-gamma.json",
     "main/scripts/dev-tunnel-supervisor.mjs",
-    "schema.sql"
+    "schema.sql",
+    "main/src/server/api-guard.ts"
   ],
   "chatClient": [
     "main/src/index.css",

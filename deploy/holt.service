@@ -1,0 +1,20 @@
+[Unit]
+Description=holt chatbox service (embed page, partner loader, identity exchange)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/holt
+# Config comes from /opt/holt/config.js (loaded by the app, not env).
+# Listens on 127.0.0.1:8830; amph's OpenResty routes holt.abstracteducation.loan to it
+# (deploy/openresty/55-holt.conf), relayed from the edges.
+ExecStart=/usr/bin/npm run holt
+Restart=on-failure
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

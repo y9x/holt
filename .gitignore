@@ -1,0 +1,9 @@
+node_modules/
+dist/
+# This host's real config. config.example.js is the committed template.
+config.js
+config.js.bak-*
+.env
+.env.*
+.vault-pass*
+*.log

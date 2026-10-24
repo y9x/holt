@@ -1,0 +1,48 @@
+{
+  "name": "holt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "holt: the community chatbox as a standalone service (embed + Discord bot), embedded by platforms through an iframe.",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "holt": "tsx src/server/holt-service.ts",
+    "discord": "tsx src/server/discord-service.ts",
+    "typecheck": "tsc -b",
+    "test": "node --import tsx --test --test-skip-pattern='^top-level await$' 'src/**/*.test.mjs'",
+    "e2e": "node --import tsx scripts/embed-e2e.mjs"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "discord.js": "^14.26.4",
+    "node-html-parser": "^9.0.4",
+    "nodemailer": "^10.0.12",
+    "otplib": "^13.5.0",
+    "pg": "^8.23.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "wreq-js": "^3.2.0",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^6.1.1",
+    "acorn": "^8.18.0",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.64.0",
+    "tsx": "^4.20.6",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.13"
+  }
+}

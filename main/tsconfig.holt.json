@@ -1,0 +1,39 @@
+{
+  // holt-owned code, strict. Only files whose whole import closure is strict-clean belong here: the
+  // embed client (with the vendored Holy family it imports) and the holt service's own modules. The
+  // moved bot code imports abulxt's shared modules, which are not written for strict, so it is
+  // checked by tsconfig.app.json only.
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.holt.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "esnext",
+    "types": ["vite/client", "node"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": [
+    "src/embed",
+    "src/server/holt-service.ts",
+    "src/server/holt-config.ts",
+    "src/server/platforms.ts",
+    "src/server/jwt.ts",
+    "src/server/identity-token.ts",
+    "src/server/session.ts"
+  ]
+}

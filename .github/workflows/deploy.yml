@@ -1,0 +1,82 @@
+# holt CI: check, build through the protection pipeline, prove the compiled embed in Chrome, deploy.
+#
+#   pull_request   check + build + e2e. No secrets (fork PRs never get them), never deploys.
+#   push to main   the same, then deploy/deploy.sh to amph (the service AND the Discord bot).
+#
+# Repo config (y9x/holt):
+#   secrets.HOLT_DEPLOY_KEY      ed25519 private key; on amph it is forced through
+#                                /usr/local/sbin/holt-deploy-gate (rsync into /opt/holt + activate only).
+#   vars.HOLT_DEPLOY_HOST        amph's address. vars.HOLT_DEPLOY_KNOWN_HOSTS: its pinned host key line.
+#
+# Not run here: `make vendor-check`. It needs the private abulxt checkout next to holt; run it locally.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Never let two deploys overlap; rapid pushes queue rather than interleave rsync/systemctl on amph.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || 'production-deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: main/package-lock.json
+
+      - name: Install
+        working-directory: main
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: make typecheck
+
+      - name: Test
+        run: make test
+
+      # Vite build -> shield compile mode -> obfuscator -> canary check (exit 2 on a leak) -> dist refs.
+      - name: Build
+        run: make build
+
+      - name: Browser check (compiled embed, framed cross-site)
+        working-directory: main
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npm run e2e
+
+      - name: Configure SSH
+        if: github.event_name != 'pull_request'
+        env:
+          HOLT_DEPLOY_KEY: ${{ secrets.HOLT_DEPLOY_KEY }}
+          HOLT_DEPLOY_KNOWN_HOSTS: ${{ vars.HOLT_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$HOLT_DEPLOY_KEY" ] || [ -z "$HOLT_DEPLOY_KNOWN_HOSTS" ]; then
+            echo "::error::HOLT_DEPLOY_KEY / HOLT_DEPLOY_KNOWN_HOSTS are not set; cannot deploy."
+            exit 1
+          fi
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$HOLT_DEPLOY_KEY" > ~/.ssh/holt_deploy
+          chmod 600 ~/.ssh/holt_deploy
+          printf '%s\n' "$HOLT_DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy to amph
+        if: github.event_name != 'pull_request'
+        env:
+          HOLT_SSH_TARGET: root@${{ vars.HOLT_DEPLOY_HOST }}
+          HOLT_SSH: ssh -i ~/.ssh/holt_deploy -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+        run: bash deploy/deploy.sh

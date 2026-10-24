@@ -1,0 +1,17 @@
+{
+  "_README": "holt's canaries: plaintext strings that must NOT appear verbatim in any shipped holt bundle (main/dist) or the partner loader (main/loader). Scanned by scripts/check-plaintext-leaks.mjs (vendored from abulxt), which hard-fails with exit 2 on a hit. This list lives in scripts/ so it is never emitted into the bundle. holt-owned: abulxt's list names abulxt's brands and domains. Keep it small; add a string only when it is a real literal rendered to users that holt commits to hiding.",
+  "canaries": [
+    {
+      "value": "Browsing as a guest.",
+      "reason": "Embed status copy, HolyText-wrapped. Its presence proves static UI text never ships as plaintext in the bundle or the HTML shell."
+    },
+    {
+      "value": "This chat is meant to be embedded in another site.",
+      "reason": "Standalone-visit copy, HolyText-wrapped. Same proof as above, for a string only rendered off the main path."
+    },
+    {
+      "value": "Verify your email to chat.",
+      "reason": "Compose gate copy (writeDenialCore's message in abulxt), HolyText-wrapped. Will be rendered by the moved chat client."
+    }
+  ]
+}

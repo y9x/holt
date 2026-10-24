@@ -4,11 +4,14 @@ import {
   ChannelType,
   Routes,
   MessageReferenceType,
+  type AnyThreadChannel,
+  type ForumChannel,
   type Guild,
   type GuildMember,
   type PartialGuildMember,
   type Message,
   type MessageMentionOptions,
+  type MediaChannel,
   type NewsChannel,
   type Role,
   type TextChannel,
@@ -23,8 +26,10 @@ import { messageLinks } from './discord-unfurl.js'
 import { type DiscordApiUserRaw } from './discord-channel-access.js'
 import {
   CATEGORY_CHANNEL_TYPE,
+  CHANNEL_FLAG_OBFUSCATED,
   changedGuilds,
   everyoneCanView,
+  forumSignature,
   layoutSignatures,
   overwritesKey,
   protectedFromDisable,
@@ -34,6 +39,7 @@ import {
 import { absoluteAvatarUrl, isApprovedSha, shaFromAvatarUrl } from './avatar-store.js'
 import { componentsFromRaw, interactionFromRaw, MessageFlag } from './discord-interactions.js'
 import { bridgeTargets, inExpectedGuild } from './bridge-config.ts'
+import { planActivePosts, planArchivedPage, postsToTombstone, resolveForumBackfill } from './discord-forum-sync.ts'
 
 // Bridges guild text/announcement channels with the site chatbox, across
 // every guild the bot is in: each channel inside a configured category
@@ -42,11 +48,25 @@ import { bridgeTargets, inExpectedGuild } from './bridge-config.ts'
 // to discord_bridge_message and broadcast over the realtime bus;
 // web-originated rows (written by the app server) are delivered back to
 // Discord through each channel's webhook with the sender's identity.
+//
+// Forum (15) and media (16, config.discord.bridge.mediaChannels) channels are
+// bridged too (docs/forum/contract.md): a forum holds posts (threads), each
+// stored in discord_bridge_post; a post's messages are ordinary rows keyed by
+// the thread id. The forum's webhook delivers web posts (thread_name +
+// applied_tags) and replies (thread_id); thread gateway events and a
+// per-forum reconcile (active + archived posts, to a horizon) keep the posts.
 
 const discordCdn = 'https://cdn.discordapp.com'
 
 // Text (0) and announcement (5) channels: both have webhooks + messages.
 type BridgeTextChannel = TextChannel | NewsChannel
+// Forum (15) and media (16) channels: webhooks + posts (threads), no messages.
+type BridgeForumChannel = ForumChannel | MediaChannel
+type BridgeChannel = BridgeTextChannel | BridgeForumChannel
+
+function isForumChannel(channel: { type: number }): channel is BridgeForumChannel {
+  return channel.type === ChannelType.GuildForum || channel.type === ChannelType.GuildMedia
+}
 
 interface BridgeRuntime {
   client: Client
@@ -55,8 +75,11 @@ interface BridgeRuntime {
   // Guilds holding a configured category or legacy channel: their channel
   // events can change the bridged set.
   watchGuildIds: Set<string>
+  // Keyed by the bridged channel id (a post uses its FORUM's webhook).
   webhooks: Map<string, WebhookClient>
-  channels: Map<string, BridgeTextChannel>
+  channels: Map<string, BridgeChannel>
+  // Post (thread) id → forum id, for every known post of a bridged forum.
+  threads: Map<string, string>
   recentSends: Map<string, number[]>
   sweepTimer: NodeJS.Timeout | null
   dirSyncTimer: NodeJS.Timeout | null
@@ -182,9 +205,120 @@ function isOwnBotReply(message: Message, botId: string | undefined): boolean {
   return Boolean(botId && message.author.id === botId && message.interactionMetadata)
 }
 
-async function persistDiscordMessage(message: Message, opts: { broadcast: boolean } = { broadcast: true }): Promise<boolean> {
+// --- Forum posts ----------------------------------------------------------------
+
+// Where a Discord channel id sits in the bridge: a bridged text channel
+// (forumId null), or a post (thread) of a bridged forum. null = not bridged.
+// `channel` is the gateway's channel object when there is one: a cached
+// non-thread answers without a database lookup; an unknown or partial one
+// (an archived post evicted from the cache) is looked up in
+// discord_bridge_post.
+interface MessageScope {
+  channelId: string
+  forumId: string | null
+}
+
+async function bridgedScope(channelId: string, channel?: unknown): Promise<MessageScope | null> {
+  const rt = runtime
+  if (!rt || !channelId) return null
+  const direct = rt.channels.get(channelId)
+  if (direct) return isForumChannel(direct) ? null : { channelId, forumId: null }
+  const known = rt.threads.get(channelId)
+  if (known) return rt.channels.has(known) ? { channelId, forumId: known } : null
+  const c = channel as { parentId?: string | null; partial?: boolean; isThread?: () => boolean } | null | undefined
+  if (c && !c.partial && typeof c.isThread === 'function' && !c.isThread()) return null
+  const forumId = c?.parentId || (await bridge.postByThreadId(channelId).catch(() => null))?.forumId || null
+  const forum = forumId ? rt.channels.get(forumId) : undefined
+  if (!forumId || !forum || !isForumChannel(forum)) return null
+  rt.threads.set(channelId, forumId)
+  return { channelId, forumId }
+}
+
+// The webhook a message in this scope was delivered through: the channel's,
+// or the post's forum's (webhooks belong to the forum).
+function webhookFor(scope: MessageScope): WebhookClient | undefined {
+  return runtime?.webhooks.get(scope.forumId || scope.channelId)
+}
+
+function isoOrNow(ms: number | null | undefined): string {
+  return typeof ms === 'number' && Number.isFinite(ms) ? new Date(ms).toISOString() : new Date().toISOString()
+}
+
+function threadFields(thread: AnyThreadChannel): bridge.PostThreadFields {
+  return {
+    threadId: thread.id,
+    forumId: thread.parentId || '',
+    guildId: thread.guildId,
+    name: thread.name,
+    ownerId: thread.ownerId ?? null,
+    appliedTags: [...(thread.appliedTags || [])],
+    flags: Number(thread.flags?.bitfield ?? 0),
+    archived: Boolean(thread.archived),
+    locked: Boolean(thread.locked),
+    autoArchiveDuration: typeof thread.autoArchiveDuration === 'number' ? thread.autoArchiveDuration : null,
+    archiveTimestamp: thread.archiveTimestamp ? new Date(thread.archiveTimestamp).toISOString() : null,
+    rateLimitPerUser: thread.rateLimitPerUser ?? 0,
+    messageCount: thread.messageCount ?? 0,
+    totalMessageSent: thread.totalMessageSent ?? 0,
+    lastMessageId: thread.lastMessageId ?? null,
+    createdAt: thread.createdTimestamp ? isoOrNow(thread.createdTimestamp) : (bridge.snowflakeTime(thread.id) || isoOrNow(null)),
+  }
+}
+
+// Forums with a web post delivery in flight: a THREAD_CREATE for our own
+// webhook's new post waits for the delivery to re-key the pending row rather
+// than racing it with a Discord-direction row.
+const postDeliveries = new Map<string, number>()
+
+async function waitForPostDelivery(forumId: string): Promise<void> {
+  for (let i = 0; i < 20 && (postDeliveries.get(forumId) || 0) > 0; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+}
+
+// Upsert a post from its thread (gateway or reconcile). `broadcast` emits
+// bridge.post.created / .updated when something a client renders changed.
+async function syncPost(thread: AnyThreadChannel, broadcast: boolean): Promise<bridge.BridgePost | null> {
+  const rt = runtime
+  if (!rt || !thread.parentId) return null
+  const forum = rt.channels.get(thread.parentId)
+  if (!forum || !isForumChannel(forum)) return null
+  const hook = rt.webhooks.get(forum.id)
+  // Our own webhook's post before deliverWebMessageOnce stored it: that path
+  // re-keys the pending row (and drops any row raced in here).
+  if (hook && thread.ownerId === hook.id && !(await bridge.postByThreadId(thread.id).catch(() => null))) return null
+  rt.threads.set(thread.id, forum.id)
+  const member = thread.ownerId ? thread.guild.members.cache.get(thread.ownerId) : undefined
+  const color = member && member.displayHexColor !== '#000000' ? member.displayHexColor : null
+  const { post, created, changed } = await bridge.upsertDiscordPost(threadFields(thread), {
+    name: member?.displayName ?? null,
+    avatar: member?.displayAvatarURL({ extension: 'webp', size: 64 }) ?? null,
+    color,
+  })
+  if (broadcast && changed) await bridge.emitPostEvent(created ? 'bridge.post.created' : 'bridge.post.updated', post).catch(() => {})
+  return post
+}
+
+// A post's counts / activity / starter changed (a message landed or went):
+// push the refreshed card.
+async function refreshPost(threadId: string): Promise<void> {
+  const post = await bridge.postByThreadId(threadId).catch(() => null)
+  if (post && !post.deletedAt) await bridge.emitPostEvent('bridge.post.updated', post).catch(() => {})
+}
+
+// The post row must exist before its messages are stored (the starter's
+// MESSAGE_CREATE can beat THREAD_CREATE).
+async function ensurePost(message: Message, forumId: string): Promise<void> {
+  if (await bridge.postByThreadId(message.channelId).catch(() => null)) return
+  const thread = message.channel.isThread()
+    ? message.channel
+    : await runtime?.client.channels.fetch(message.channelId).catch(() => null)
+  if (thread && thread.isThread() && thread.parentId === forumId) await syncPost(thread, true)
+}
+
+async function persistDiscordMessage(message: Message, opts: { broadcast: boolean; forumId?: string | null } = { broadcast: true }): Promise<boolean> {
   const channel = runtime?.channels.get(message.channelId)
-  if (channel) {
+  if (channel && !isForumChannel(channel)) {
     // Metadata only: never (re-)enables the row (only the bridge-set sync
     // does), so a late message can't revive a channel just disabled.
     await bridge.updateChannelMetadata({
@@ -220,7 +354,8 @@ async function persistDiscordMessage(message: Message, opts: { broadcast: boolea
 
   const attachments = attachmentPayload(message)
   const ix = interactionPayload(message, attachments)
-  const { existed } = await bridge.recordMessage({
+  if (opts.forumId) await ensurePost(message, opts.forumId).catch(() => {})
+  const { message: recorded, existed } = await bridge.recordMessage({
     channelId: message.channelId,
     direction: 'discord',
     discordMessageId: message.id,
@@ -250,9 +385,15 @@ async function persistDiscordMessage(message: Message, opts: { broadcast: boolea
       console.error('[abulxt-discord] failed to store interaction fields:', error instanceof Error ? error.message : error)
     })
   }
+  // A post message: bump "Recently Active" (THREAD_UPDATE never carries it);
+  // the starter shares the thread's id.
+  if (opts.forumId) {
+    await bridge.touchPost(message.channelId, message.createdAt, message.id === message.channelId ? recorded.id : null).catch(() => {})
+  }
   if (opts.broadcast) {
     const stored = await bridge.byDiscordMessageId(message.id)
     if (stored) await bridge.broadcastMessage(stored)
+    if (opts.forumId) await refreshPost(message.channelId)
   }
   return true
 }
@@ -361,7 +502,9 @@ function reconcileRowFor(message: Message): { row: ReconcileRow; ix: ReturnType<
   }
 }
 
-async function reconcileChannel(rt: BridgeRuntime, channel: BridgeTextChannel): Promise<void> {
+// `channel` is a bridged text channel, or a post's thread (`forumId` = its
+// forum: own deliveries come from the forum's webhook).
+async function reconcileChannel(rt: BridgeRuntime, channel: BridgeTextChannel | AnyThreadChannel, forumId: string | null = null): Promise<number> {
   const fetchStartedAt = Date.now()
   let fetched: Message[]
   try {
@@ -370,7 +513,7 @@ async function reconcileChannel(rt: BridgeRuntime, channel: BridgeTextChannel): 
   } catch (error) {
     // Nothing is touched when Discord can't tell us the current state.
     console.error(`[abulxt-discord] reconcile #${channel.name}: fetch failed, channel left unchanged:`, error instanceof Error ? error.message : error)
-    return
+    return 0
   }
 
   // A short fetch means the whole channel is in the window: no lower bound.
@@ -397,12 +540,12 @@ async function reconcileChannel(rt: BridgeRuntime, channel: BridgeTextChannel): 
       : []))
   } catch (error) {
     console.error(`[abulxt-discord] reconcile #${channel.name}: stored-row load failed, channel left unchanged:`, error instanceof Error ? error.message : error)
-    return
+    return 0
   }
 
   // Same skip rules as the live messageCreate path: our own webhook deliveries
   // (already stored as direction 'web') and bot chatter without a webhook.
-  const ownHook = rt.webhooks.get(channel.id)
+  const ownHook = rt.webhooks.get(forumId || channel.id)
   const persistable = fetched.filter((m) => {
     if (m.webhookId && ownHook && m.webhookId === ownHook.id) return false
     if (m.author.bot && !m.webhookId && !isOwnBotReply(m, rt.client.user?.id)) return false
@@ -426,7 +569,7 @@ async function reconcileChannel(rt: BridgeRuntime, channel: BridgeTextChannel): 
   // Oldest first, so reply targets and forwards resolve against earlier rows.
   for (const id of plan.insert) {
     try {
-      if (await persistDiscordMessage(byId.get(id)!, { broadcast: false })) inserted++
+      if (await persistDiscordMessage(byId.get(id)!, { broadcast: false, forumId })) inserted++
     } catch (error) {
       failed++
       console.error(`[abulxt-discord] reconcile #${channel.name}: insert ${id} failed:`, error instanceof Error ? error.message : error)
@@ -478,7 +621,98 @@ async function reconcileChannel(rt: BridgeRuntime, channel: BridgeTextChannel): 
     await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.channel.resync', { channelId: channel.id }).catch(() => {})
   }
   const scope = wholeChannel ? 'whole channel' : `window of ${RECONCILE_WINDOW}`
-  console.log(`[abulxt-discord] reconcile #${channel.name} (${scope}): fetched ${fetched.length}, inserted ${inserted}, updated ${updated}, deleted ${deleted}, skipped ${skipped}${failed ? `, failed ${failed}` : ''}`)
+  // Posts log only when something changed (a forum can hold hundreds).
+  if (!forumId || inserted || updated || deleted || failed) {
+    console.log(`[abulxt-discord] reconcile #${channel.name} (${scope}): fetched ${fetched.length}, inserted ${inserted}, updated ${updated}, deleted ${deleted}, skipped ${skipped}${failed ? `, failed ${failed}` : ''}`)
+  }
+  return inserted + updated + deleted
+}
+
+// Between two posts' message fetches (each thread is its own rate-limit
+// bucket; this keeps a 200-post forum's pass well under the global limit).
+const FORUM_THREAD_PAUSE_MS = 750
+// Hard stop on archived pages per forum (100 posts a page).
+const MAX_ARCHIVED_PAGES = 20
+
+// A forum has no messages of its own: list its active posts and page its
+// archived ones down to the backfill horizon (discord-forum-sync.ts), upsert
+// each post, then reconcile every post's messages like a channel. Posts holt
+// stored that Discord no longer lists are tombstoned after a complete pass.
+async function reconcileForum(rt: BridgeRuntime, forum: BridgeForumChannel): Promise<void> {
+  const horizon = resolveForumBackfill(getConfig().discord?.bridge?.forumBackfill)
+  let active: AnyThreadChannel[]
+  try {
+    active = [...(await forum.threads.fetchActive()).threads.values()]
+  } catch (error) {
+    console.error(`[abulxt-discord] reconcile forum #${forum.name}: active posts fetch failed, forum left unchanged:`, error instanceof Error ? error.message : error)
+    return
+  }
+  const seen = new Set(active.map((t) => t.id))
+  const activeIds = new Set(planActivePosts(active, horizon))
+  const taken = new Map<string, AnyThreadChannel>(active.filter((t) => activeIds.has(t.id)).map((t) => [t.id, t]))
+  let before: Date | undefined
+  let complete = false
+  for (let page = 0; page < MAX_ARCHIVED_PAGES; page++) {
+    let res: { threads: ReadonlyMap<string, AnyThreadChannel>; hasMore?: boolean }
+    try {
+      // `before` must be a Date: discord.js silently drops a thread id it hasn't cached.
+      res = await forum.threads.fetchArchived({ type: 'public', before, limit: 100 })
+    } catch (error) {
+      console.error(`[abulxt-discord] reconcile forum #${forum.name}: archived posts fetch failed:`, error instanceof Error ? error.message : error)
+      break
+    }
+    const threads = [...res.threads.values()].sort((a, b) => (b.archiveTimestamp ?? 0) - (a.archiveTimestamp ?? 0))
+    for (const t of threads) seen.add(t.id)
+    const plan = planArchivedPage({
+      taken: taken.size,
+      page: threads.map((t) => ({ id: t.id, archiveTimestamp: t.archiveTimestamp ?? null })),
+      hasMore: res.hasMore === true,
+      horizon,
+      nowMs: Date.now(),
+    })
+    for (const id of plan.take) {
+      const t = threads.find((x) => x.id === id)
+      if (t) taken.set(id, t)
+    }
+    if (plan.complete) { complete = true; break }
+    if (!plan.next) break
+    before = plan.next
+    await new Promise((resolve) => setTimeout(resolve, FORUM_THREAD_PAUSE_MS))
+    if (runtime !== rt) return
+  }
+  let changed = 0
+  for (const thread of taken.values()) {
+    const prev = await bridge.postByThreadId(thread.id).catch(() => null)
+    const post = await syncPost(thread, false).catch((error) => {
+      console.error(`[abulxt-discord] reconcile forum #${forum.name}: post ${thread.id} upsert failed:`, error instanceof Error ? error.message : error)
+      return null
+    })
+    if (post && bridge.postStateChanged(prev, post)) changed++
+  }
+  for (const id of postsToTombstone(await bridge.forumThreadIds(forum.id).catch(() => []), seen, complete)) {
+    const gone = await bridge.deletePostByThread(id).catch(() => null)
+    if (gone) {
+      changed++
+      rt.threads.delete(id)
+      await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.post.deleted', { channelId: forum.id, postId: id }).catch(() => {})
+    }
+  }
+  for (const thread of taken.values()) {
+    if (runtime !== rt) return
+    await new Promise((resolve) => setTimeout(resolve, FORUM_THREAD_PAUSE_MS))
+    changed += await reconcileChannel(rt, thread, forum.id).catch((error) => {
+      console.error(`[abulxt-discord] reconcile post ${thread.id} crashed:`, error instanceof Error ? error.message : error)
+      return 0
+    })
+  }
+  // One event for the whole pass: open forum views refetch their post list.
+  if (changed > 0) await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.channel.resync', { channelId: forum.id }).catch(() => {})
+  console.log(`[abulxt-discord] reconcile forum #${forum.name}: ${active.length} active, ${taken.size} post(s) synced${complete ? ' (complete)' : ` (horizon ${horizon.posts} posts / ${horizon.days} days)`}, ${changed} change(s)`)
+}
+
+async function reconcileAny(rt: BridgeRuntime, channel: BridgeChannel): Promise<void> {
+  if (isForumChannel(channel)) await reconcileForum(rt, channel)
+  else await reconcileChannel(rt, channel)
 }
 
 async function reconcileBridgedHistory(): Promise<void> {
@@ -491,7 +725,7 @@ async function reconcileBridgedHistory(): Promise<void> {
     if (!first) await new Promise((resolve) => setTimeout(resolve, RECONCILE_PAUSE_MS))
     first = false
     if (runtime !== rt) return
-    await reconcileChannel(rt, channel).catch((error) => {
+    await reconcileAny(rt, channel).catch((error) => {
       console.error(`[abulxt-discord] reconcile #${channel.name} crashed:`, error instanceof Error ? error.message : error)
     })
   }
@@ -516,7 +750,7 @@ function isSpam(runtime: BridgeRuntime, message: Message): boolean {
   return hits.length >= 5 && distinct.size === 1 && message.content.length > 3
 }
 
-async function ensureWebhook(channel: BridgeTextChannel): Promise<WebhookClient | null> {
+async function ensureWebhook(channel: BridgeChannel): Promise<WebhookClient | null> {
   const cached = runtime?.webhooks.get(channel.id)
   if (cached) return cached
   const row = await query<{ webhook_id: string | null; webhook_token: string | null }>(
@@ -655,6 +889,20 @@ async function deliverWebMessage(id: number): Promise<void> {
   }
 }
 
+// Discord JSON error code of a failed REST call (discord.js DiscordAPIError).
+function discordErrorCode(error: unknown): number | null {
+  const code = (error as { code?: unknown } | null)?.code
+  return typeof code === 'number' ? code : null
+}
+
+// A web post Discord will never accept as sent: tag required / unknown tag /
+// no tags usable by non-moderators / the guild's active thread cap / invalid
+// form body (a bad title). Dropped, not retried for the sweep's 10 minutes.
+const PERMANENT_POST_CODES: ReadonlySet<number> = new Set([40067, 10087, 40066, 160006, 50035])
+// A reply that can't land: the post is locked (160005) or locked + archived
+// (50083), the thread is gone (10003) or the bot lost access (50001).
+const PERMANENT_REPLY_CODES: ReadonlySet<number> = new Set([160005, 50083, 10003, 50001])
+
 async function deliverWebMessageOnce(id: number): Promise<void> {
   const { rows } = await query<OutboxRow>(
     `SELECT id, channel_id, author_name, author_avatar, content, mentions, reply_to, reply_mention, forwarded
@@ -663,11 +911,36 @@ async function deliverWebMessageOnce(id: number): Promise<void> {
     [id],
   )
   const row = rows[0]
-  if (!row) return
-  const channel = runtime?.channels.get(row.channel_id)
-  if (!channel) return
-  const hook = await ensureWebhook(channel)
+  const rt = runtime
+  if (!row || !rt) return
+  // Where it goes: a bridged text channel; a pending web post ('post:<pk>':
+  // the forum webhook creates the thread); or a reply in a post (the forum
+  // webhook with thread_id).
+  const pendingPk = bridge.parsePendingPostId(row.channel_id)
+  let hookChannel: BridgeChannel | undefined
+  let threadId: string | null = null
+  let newPost: bridge.BridgePost | null = null
+  if (pendingPk !== null) {
+    newPost = await bridge.postByPk(pendingPk).catch(() => null)
+    if (!newPost || newPost.deletedAt || newPost.threadId) return
+    hookChannel = rt.channels.get(newPost.forumId)
+    if (!hookChannel || !isForumChannel(hookChannel)) return
+  } else {
+    const direct = rt.channels.get(row.channel_id)
+    if (direct) {
+      if (isForumChannel(direct)) return // a forum takes no messages
+      hookChannel = direct
+    } else {
+      const scope = await bridgedScope(row.channel_id)
+      if (!scope?.forumId) return
+      hookChannel = rt.channels.get(scope.forumId)
+      threadId = row.channel_id
+    }
+  }
+  if (!hookChannel) return
+  const hook = await ensureWebhook(hookChannel)
   if (!hook) return
+  if (newPost) postDeliveries.set(newPost.forumId, (postDeliveries.get(newPost.forumId) || 0) + 1)
   try {
     const replyMessageId = await resolveReplyMessageId(row.reply_to)
     // Reply "@ ON/OFF": replied_user pings the referenced author only when the
@@ -681,14 +954,16 @@ async function deliverWebMessageOnce(id: number): Promise<void> {
     const avatarOk = !ownAvatarSha || (await isApprovedSha(ownAvatarSha).catch(() => false))
     const avatarURL = (avatarOk && (await absoluteAvatarUrl(row.author_avatar).catch(() => null))) || `${discordCdn}/embed/avatars/0.png`
     let sentId: string
+    let sentChannelId: string | null = null
     let sentEmbeds: Record<string, unknown>[] = []
-    if (replyMessageId) {
+    if (replyMessageId && !newPost) {
       // Reply threading: discord.js v14's typed webhook send can't carry
       // message_reference (WebhookMessageCreateOptions omits `reply`, and the
       // payload builder crashes resolving it against a webhook target), so
       // post the webhook route directly with the same body hook.send would
       // build, plus message_reference. fail_if_not_exists: false keeps
       // delivery alive when the referenced message was deleted on Discord.
+      // In a post, thread_id routes it into the thread (forum webhook).
       const body = {
         content,
         username,
@@ -701,11 +976,13 @@ async function deliverWebMessageOnce(id: number): Promise<void> {
         },
         message_reference: { message_id: replyMessageId, fail_if_not_exists: false },
       }
+      const queryParams = new URLSearchParams({ wait: 'true' })
+      if (threadId) queryParams.set('thread_id', threadId)
       const sent = (await hook.client.rest.post(Routes.webhook(hook.id, hook.token!), {
         body,
-        query: new URLSearchParams({ wait: 'true' }),
+        query: queryParams,
         auth: false,
-      })) as { id: string; embeds?: unknown[] }
+      })) as { id: string; channel_id?: string; embeds?: unknown[] }
       sentId = sent.id
       sentEmbeds = rawEmbedList(sent.embeds)
     } else {
@@ -714,11 +991,30 @@ async function deliverWebMessageOnce(id: number): Promise<void> {
         avatarURL,
         content,
         allowedMentions,
+        // A new post: the webhook creates the thread (its starter message is
+        // this one, with the thread's id). A reply: into the post's thread.
+        ...(newPost ? { threadName: newPost.name.slice(0, 100), appliedTags: newPost.appliedTags.slice(0, 5) } : {}),
+        ...(threadId ? { threadId } : {}),
       })
       sentId = sent.id
+      sentChannelId = sent.channel_id
       sentEmbeds = rawEmbedList(sent.embeds)
     }
-    await bridge.attachDiscordMessageId(Number(row.id), sentId)
+    if (newPost) {
+      // The starter message's id is the thread id (and its channel).
+      const newThreadId = sentChannelId || sentId
+      const delivered = await bridge.deliverPendingPost(newPost.pk, newThreadId, Number(row.id), sentId)
+      rt.threads.set(newThreadId, newPost.forumId)
+      if (delivered) {
+        await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.post.delivered', {
+          channelId: newPost.forumId,
+          pendingId: newPost.id,
+          post: await bridge.forumPostView(delivered),
+        }).catch(() => {})
+      }
+    } else {
+      await bridge.attachDiscordMessageId(Number(row.id), sentId)
+    }
     // Discord resolves links it has already unfurled (a GIF/image/CDN link
     // posted before) synchronously: the embeds come back in the webhook
     // response and NO embed MESSAGE_UPDATE follows - adopt them here, or the
@@ -730,7 +1026,29 @@ async function deliverWebMessageOnce(id: number): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('[abulxt-discord] webhook delivery failed:', error instanceof Error ? error.message : error)
+    const code = discordErrorCode(error)
+    if (newPost && code !== null && PERMANENT_POST_CODES.has(code)) {
+      // Tell the author (and the forum): the post is withdrawn with Discord's code.
+      const dropped = await bridge.dropPendingPost(newPost.pk, code).catch(() => null)
+      if (dropped) {
+        await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.post.deleted', { channelId: newPost.forumId, postId: newPost.id, failed: true, code }).catch(() => {})
+      }
+      console.warn(`[abulxt-discord] web post ${newPost.id} refused by Discord (code ${code}) - dropped`)
+    } else if (threadId && code !== null && PERMANENT_REPLY_CODES.has(code)) {
+      const gone = await bridge.deleteMessage(Number(row.id)).catch(() => null)
+      if (gone) {
+        await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.message.deleted', { id: gone.id, channelId: gone.channelId, discordMessageId: null, failed: true, code }).catch(() => {})
+      }
+      console.warn(`[abulxt-discord] reply ${row.id} in post ${threadId} refused by Discord (code ${code}) - dropped`)
+    } else {
+      console.error('[abulxt-discord] webhook delivery failed:', error instanceof Error ? error.message : error)
+    }
+  } finally {
+    if (newPost) {
+      const left = (postDeliveries.get(newPost.forumId) || 1) - 1
+      if (left > 0) postDeliveries.set(newPost.forumId, left)
+      else postDeliveries.delete(newPost.forumId)
+    }
   }
 }
 
@@ -763,11 +1081,31 @@ async function outboxSweepOnce(): Promise<void> {
 // leaves. Driven by pg_notify from the app server (abulxt_bridge_reaction).
 const REACTION_NOTIFY_CHANNEL = 'abulxt_bridge_reaction'
 
+// The Discord channel a bridged message lives in (a bridged text channel, or
+// a post's thread, fetched when the cache evicted it) and the channel whose
+// webhook delivered it (the forum, for a post). null = not bridged.
+async function messageHome(channelId: string): Promise<{
+  channel: BridgeTextChannel | AnyThreadChannel
+  hookChannel: BridgeChannel
+  threadId: string | null
+} | null> {
+  const rt = runtime
+  if (!rt) return null
+  const direct = rt.channels.get(channelId)
+  if (direct) return isForumChannel(direct) ? null : { channel: direct, hookChannel: direct, threadId: null }
+  const scope = await bridgedScope(channelId)
+  const forum = scope?.forumId ? rt.channels.get(scope.forumId) : undefined
+  if (!scope?.forumId || !forum) return null
+  const thread = rt.client.channels.cache.get(channelId) ?? await rt.client.channels.fetch(channelId).catch(() => null)
+  if (!thread || !thread.isThread() || thread.parentId !== forum.id) return null
+  return { channel: thread, hookChannel: forum, threadId: thread.id }
+}
+
 async function applyBotReaction(payload: { discordMessageId?: string; channelId?: string; emoji?: string; botShouldReact?: boolean }): Promise<void> {
   if (!runtime || !payload.discordMessageId || !payload.channelId || !payload.emoji) return
-  const channel = runtime.channels.get(payload.channelId)
-  if (!channel) return
-  const message = await channel.messages.fetch(payload.discordMessageId).catch(() => null)
+  const home = await messageHome(payload.channelId)
+  if (!home) return
+  const message = await home.channel.messages.fetch(payload.discordMessageId).catch(() => null)
   if (!message) return
   // Find the bot's own current reaction to this emoji (the bot never counts as
   // a real reactor).
@@ -782,13 +1120,14 @@ async function applyBotReaction(payload: { discordMessageId?: string; channelId?
 // Web-originated edits/deletes are mirrored to Discord over pg_notify (the web
 // endpoints in discord-bridge-api.ts notify after persisting). Edits go through
 // the channel webhook (Discord only lets the webhook that sent a message edit
-// it); deletes use the bot token, which can remove any message in its bridged
-// channels - webhook deliveries and Discord-originated messages alike.
+// it; in a post, the forum's webhook with thread_id); deletes use the bot
+// token, which can remove any message in its bridged channels - webhook
+// deliveries and Discord-originated messages alike.
 async function applyBotEdit(payload: { discordMessageId?: string; channelId?: string; content?: string }): Promise<void> {
   if (!runtime || !payload.discordMessageId || !payload.channelId || typeof payload.content !== 'string') return
   try {
-    const channel = runtime.channels.get(payload.channelId)
-    if (!channel) return
+    const home = await messageHome(payload.channelId)
+    if (!home) return
     // Build allowedMentions from the persisted mentions for this message -
     // the same authoritative list the delivery path uses. The edit endpoint
     // re-ran the permission gate and stored the gated mentions, so the Discord
@@ -797,12 +1136,12 @@ async function applyBotEdit(payload: { discordMessageId?: string; channelId?: st
     // content and ping @everyone/roles the caller has no right to.
     const stored = await bridge.byDiscordMessageId(payload.discordMessageId).catch(() => null)
     const allowedMentions = allowedMentionsFromStored(stored?.mentions ?? [], false)
-    const hook = await ensureWebhook(channel)
+    const hook = await ensureWebhook(home.hookChannel)
     if (hook) {
-      await hook.editMessage(payload.discordMessageId, { content: payload.content, allowedMentions })
+      await hook.editMessage(payload.discordMessageId, { content: payload.content, allowedMentions, ...(home.threadId ? { threadId: home.threadId } : {}) })
       return
     }
-    const message = await channel.messages.fetch(payload.discordMessageId).catch(() => null)
+    const message = await home.channel.messages.fetch(payload.discordMessageId).catch(() => null)
     if (message) await message.edit({ content: payload.content, allowedMentions })
   } catch (error) {
     console.error('[abulxt-discord] failed to mirror web edit to Discord:', error instanceof Error ? error.message : error)
@@ -812,9 +1151,9 @@ async function applyBotEdit(payload: { discordMessageId?: string; channelId?: st
 async function applyBotDelete(payload: { discordMessageId?: string; channelId?: string }): Promise<void> {
   if (!runtime || !payload.discordMessageId || !payload.channelId) return
   try {
-    const channel = runtime.channels.get(payload.channelId)
-    if (!channel) return
-    const message = await channel.messages.fetch(payload.discordMessageId).catch(() => null)
+    const home = await messageHome(payload.channelId)
+    if (!home) return
+    const message = await home.channel.messages.fetch(payload.discordMessageId).catch(() => null)
     if (message) await message.delete()
   } catch (error) {
     console.error('[abulxt-discord] failed to mirror web delete to Discord:', error instanceof Error ? error.message : error)
@@ -960,9 +1299,43 @@ async function syncGuildDirectory(guild: Guild): Promise<void> {
 
 // --- Bridged channel set (categories + legacy channels) -----------------------
 
-function isBridgeTextChannel(channel: unknown): channel is BridgeTextChannel {
+// config.discord.bridge.mediaChannels: media channels (16, a Discord beta)
+// are bridged like forums only when true.
+function mediaChannelsEnabled(): boolean {
+  try {
+    return getConfig().discord?.bridge?.mediaChannels === true
+  } catch {
+    return false
+  }
+}
+
+function channelFlags(channel: unknown): number {
+  const flags = (channel as { flags?: { bitfield?: number | bigint } | null } | null)?.flags
+  return Number(flags?.bitfield ?? 0)
+}
+
+// A channel the bridge can mirror: text / announcement (messages) or forum
+// (posts), media too when enabled. Never a thread, never a channel Discord
+// obfuscated for the bot (CHANNEL_OBFUSCATED, whatever its name says).
+function isBridgeChannel(channel: unknown): channel is BridgeChannel {
   const c = channel as { type?: number; guildId?: string } | null
-  return Boolean(c && c.guildId && (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement))
+  if (!c || !c.guildId) return false
+  if ((channelFlags(c) & CHANNEL_FLAG_OBFUSCATED) !== 0) return false
+  return c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement || c.type === ChannelType.GuildForum
+    || (c.type === ChannelType.GuildMedia && mediaChannelsEnabled())
+}
+
+// A forum's settings in Discord's raw shapes (discord_bridge_channel columns).
+function forumInput(forum: BridgeForumChannel): bridge.ForumChannelInput {
+  return {
+    availableTags: forum.availableTags.map((t) => ({ id: t.id, name: t.name, moderated: t.moderated, emoji_id: t.emoji?.id ?? null, emoji_name: t.emoji?.name ?? null })),
+    defaultReactionEmoji: forum.defaultReactionEmoji ? { emoji_id: forum.defaultReactionEmoji.id ?? null, emoji_name: forum.defaultReactionEmoji.name ?? null } : null,
+    defaultSortOrder: forum.defaultSortOrder ?? null,
+    defaultForumLayout: 'defaultForumLayout' in forum ? Number(forum.defaultForumLayout) || 0 : 0,
+    flags: channelFlags(forum),
+    defaultThreadRateLimitPerUser: forum.defaultThreadRateLimitPerUser ?? 0,
+    rateLimitPerUser: forum.rateLimitPerUser ?? 0,
+  }
 }
 
 type OverwriteHolder = {
@@ -971,7 +1344,7 @@ type OverwriteHolder = {
 
 // @everyone VIEW_CHANNEL for a bridged channel (discord_bridge_channel
 // .everyone_can_view): the guild's @everyone role + the channel's overwrites.
-function everyoneViews(channel: BridgeTextChannel): boolean {
+function everyoneViews(channel: BridgeChannel): boolean {
   const cache = (channel as unknown as OverwriteHolder).permissionOverwrites?.cache
   return everyoneCanView({
     guildId: channel.guildId,
@@ -1010,7 +1383,7 @@ function warnOnce(id: string, message: string): void {
 }
 
 interface BridgeResolution {
-  wanted: Map<string, BridgeTextChannel>
+  wanted: Map<string, BridgeChannel>
   // Guilds holding a configured category or legacy channel.
   watchGuildIds: Set<string>
   // false = some configured id failed transiently: nothing is disabled.
@@ -1031,7 +1404,7 @@ async function resolveBridgeSet(client: Client): Promise<BridgeResolution> {
   const categoryIds = targets.categoryIds
   let complete = true
   const watchGuildIds = new Set<string>()
-  const candidates: BridgeTextChannel[] = []
+  const candidates: BridgeChannel[] = []
   const unresolvedCategoryIds = new Set<string>()
   const unresolvedLegacyIds = new Set<string>()
   for (const id of legacyIds) {
@@ -1043,9 +1416,9 @@ async function resolveBridgeSet(client: Client): Promise<BridgeResolution> {
       } else complete = false
       continue
     }
-    if (!isBridgeTextChannel(channel)) {
+    if (!isBridgeChannel(channel)) {
       unresolvedLegacyIds.add(id)
-      warnOnce(id, `bridge channel ${id} is not a guild text/announcement channel - skipping`)
+      warnOnce(id, `bridge channel ${id} is not a guild text/announcement/forum channel (media needs discord.bridge.mediaChannels) - skipping`)
       continue
     }
     if (!inExpectedGuild(targets, id, channel.guildId)) {
@@ -1081,14 +1454,15 @@ async function resolveBridgeSet(client: Client): Promise<BridgeResolution> {
     // A category that wasn't cached: make sure its guild's channels are.
     if (!cached) await guild.channels.fetch().catch(() => { complete = false })
     for (const child of guild.channels.cache.values()) {
-      if (child.parentId === id && isBridgeTextChannel(child)) candidates.push(child)
+      if (child.parentId === id && isBridgeChannel(child)) candidates.push(child)
     }
   }
-  const wanted = new Map<string, BridgeTextChannel>()
+  const wanted = new Map<string, BridgeChannel>()
   const picked = resolveBridgedChannels(
-    candidates.map((c) => ({ id: c.id, type: c.type as number, guildId: c.guildId, parentId: c.parentId ?? null, channel: c })),
+    candidates.map((c) => ({ id: c.id, type: c.type as number, guildId: c.guildId, parentId: c.parentId ?? null, flags: channelFlags(c), channel: c })),
     new Set(categoryIds),
     new Set(legacyIds),
+    { media: mediaChannelsEnabled() },
   )
   for (const p of picked) wanted.set(p.id, p.channel)
 
@@ -1102,6 +1476,8 @@ async function resolveBridgeSet(client: Client): Promise<BridgeResolution> {
       // @everyone's view is part of the layout (it gates the fail-closed
       // fallback and guests' sidebar).
       overwrites: `${overwritesOf(c as unknown as OverwriteHolder)}|everyone=${everyoneViews(c) ? 1 : 0}`,
+      // Tags, guidelines' flags, sort / layout defaults: the forum view's header.
+      ...(isForumChannel(c) ? { forum: forumSignature(forumInput(c)) } : {}),
     })
     const parentId = c.parentId
     if (!parentId || categoriesSeen.has(parentId)) continue
@@ -1150,7 +1526,7 @@ async function applyBridgeSetOnce(client: Client, reason: string): Promise<void>
   if (!rt) return
   const res = await resolveBridgeSet(client)
   if (runtime !== rt) return
-  const added: BridgeTextChannel[] = []
+  const added: BridgeChannel[] = []
   for (const channel of res.wanted.values()) {
     const isNew = !rt.channels.has(channel.id)
     rt.channels.set(channel.id, channel)
@@ -1162,6 +1538,8 @@ async function applyBridgeSetOnce(client: Client, reason: string): Promise<void>
       position: channel.position,
       parentId: channel.parentId ?? null,
       everyoneCanView: everyoneViews(channel),
+      type: channel.type as number,
+      ...(isForumChannel(channel) ? { forum: forumInput(channel) } : { flags: channelFlags(channel) }),
     }).catch((error) => {
       console.error(`[abulxt-discord] failed to store bridge channel #${channel.name}:`, error instanceof Error ? error.message : error)
     })
@@ -1193,6 +1571,8 @@ async function applyBridgeSetOnce(client: Client, reason: string): Promise<void>
       rt.channels.delete(id)
       rt.webhooks.get(id)?.destroy()
       rt.webhooks.delete(id)
+      // A forum's posts stop mirroring with it (rows and history are kept).
+      for (const [threadId, forumId] of rt.threads) if (forumId === id) rt.threads.delete(threadId)
     }
   } else {
     console.warn(`[abulxt-discord] bridge channel sync (${reason}): some configured channels/categories could not be fetched - nothing disabled this pass`)
@@ -1223,7 +1603,7 @@ async function applyBridgeSetOnce(client: Client, reason: string): Promise<void>
   // recent history like the startup reconcile does.
   if (reason !== 'startup') {
     for (const channel of added) {
-      void reconcileChannel(rt, channel).catch((error) => {
+      void reconcileAny(rt, channel).catch((error) => {
         console.error(`[abulxt-discord] reconcile #${channel.name} crashed:`, error instanceof Error ? error.message : error)
       })
     }
@@ -1248,6 +1628,7 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
     watchGuildIds: new Set(),
     webhooks: new Map(),
     channels: new Map(),
+    threads: await bridge.liveThreadForums().catch(() => new Map<string, string>()),
     recentSends: new Map(),
     sweepTimer: null,
     dirSyncTimer: null,
@@ -1324,11 +1705,14 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
   // Only bridged channels are mirrored (unbridged channels are no longer
   // read live: nothing is persisted or broadcast for them).
   client.on('messageCreate', async (message) => {
-    if (!runtime || !runtime.channels.has(message.channelId)) return
+    if (!runtime) return
+    // A bridged text channel, or a post in a bridged forum.
+    const scope = await bridgedScope(message.channelId, message.channel)
+    if (!scope) return
     // Ignore our own webhook deliveries (they are already persisted as
-    // direction 'web') and bot chatter.
+    // direction 'web') and bot chatter. In a post the webhook is the forum's.
     if (message.webhookId) {
-      const hook = runtime.webhooks.get(message.channelId)
+      const hook = webhookFor(scope)
       if (hook && message.webhookId === hook.id) return
     }
     const ownReply = isOwnBotReply(message, runtime.client.user?.id)
@@ -1358,7 +1742,8 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
       }
       // A Discord author timed out in this bridged channel - directly or
       // through their linked site account - can't post here from Discord.
-      const timeout = author ? await activeTimeout(message.channelId, author).catch(() => null) : null
+      // Timeouts in a forum cover its posts.
+      const timeout = author ? await activeTimeout(scope.forumId || message.channelId, author).catch(() => null) : null
       if (timeout) {
         await message.delete().catch(() => {})
         await bridge.logModeration({
@@ -1389,7 +1774,7 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
       }
     }
 
-    await persistDiscordMessage(message).catch((error) => {
+    await persistDiscordMessage(message, { broadcast: true, forumId: scope.forumId }).catch((error) => {
       console.error('[abulxt-discord] failed to persist bridged message:', error instanceof Error ? error.message : error)
     })
     // Refresh the author's directory cosmetics (decoration / server tag /
@@ -1401,7 +1786,9 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
   })
 
   client.on('messageUpdate', async (_old, message) => {
-    if (!runtime || !runtime.channels.has(message.channelId)) return
+    if (!runtime) return
+    const scope = await bridgedScope(message.channelId, message.channel)
+    if (!scope) return
     const full = message.partial ? await message.fetch().catch(() => null) : message
     if (!full) return
     // Web-originated rows are authoritative in the DB: the MESSAGE_UPDATE for
@@ -1411,7 +1798,7 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
     // edited_at on a fresh send - the "(edited)" on every new webhook
     // message/reply bug - and clobber the site's own unfurl embeds.
     let stored = await bridge.byDiscordMessageId(full.id)
-    if (!stored && full.webhookId && runtime.webhooks.get(full.channelId)?.id === full.webhookId) {
+    if (!stored && full.webhookId && webhookFor(scope)?.id === full.webhookId) {
       // Our own webhook delivery: Discord's embed MESSAGE_UPDATE can land
       // before deliverWebMessageOnce() has stored the snowflake. Give the
       // attach a moment instead of dropping Discord's embeds.
@@ -1461,11 +1848,15 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
     })
     if (updated) {
       await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.message.edited', edited || wasLoading ? { message: updated } : { message: updated, embedOnly: true })
+      // The starter is the post card's preview.
+      if (scope.forumId && full.id === full.channelId) await refreshPost(full.channelId)
     }
   })
 
   client.on('messageDelete', async (message) => {
-    if (!runtime || !runtime.channels.has(message.channelId)) return
+    if (!runtime) return
+    const scope = await bridgedScope(message.channelId, message.channel)
+    if (!scope) return
     const deleted = await bridge.deleteByDiscordMessageId(message.id)
     if (deleted) {
       await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.message.deleted', {
@@ -1473,6 +1864,9 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
         channelId: deleted.channelId,
         discordMessageId: deleted.discordMessageId,
       })
+      // The post survives its starter (Discord shows it without its original
+      // message); its card's counts / preview change either way.
+      if (scope.forumId) await refreshPost(message.channelId)
     }
   })
 
@@ -1480,7 +1874,7 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
   // recorded under `discord:<id>`; the bridge bot's own reaction is ignored (it
   // never counts). Webhook deliveries' reactions come from Discord users too.
   client.on('messageReactionAdd', async (reaction, user) => {
-    if (!runtime || !runtime.channels.has(reaction.message.channelId)) return
+    if (!runtime || !(await bridgedScope(reaction.message.channelId, reaction.message.channel))) return
     if (user.id === runtime.client.user?.id) return // the bridge bot's own reaction
     const message = await bridge.byDiscordMessageId(reaction.message.id)
     if (!message) return
@@ -1494,10 +1888,12 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
       emoji,
       reactions,
     })
+    // The starter's reactions show on the post card.
+    if (message.discordMessageId === message.channelId) await refreshPost(message.channelId)
   })
 
   client.on('messageReactionRemove', async (reaction, user) => {
-    if (!runtime || !runtime.channels.has(reaction.message.channelId)) return
+    if (!runtime || !(await bridgedScope(reaction.message.channelId, reaction.message.channel))) return
     if (user.id === runtime.client.user?.id) return
     const message = await bridge.byDiscordMessageId(reaction.message.id)
     if (!message) return
@@ -1511,6 +1907,59 @@ export async function startBridge(client: Client, opts: { onGuildsChanged?: (gui
       emoji,
       reactions,
     })
+    // The starter's reactions show on the post card.
+    if (message.discordMessageId === message.channelId) await refreshPost(message.channelId)
+  })
+
+  // Forum posts (threads of bridged forums). The gateway only syncs ACTIVE
+  // threads; archived ones come from the reconcile pass (reconcileForum).
+  const bridgedForumOf = (thread: { parentId: string | null }): BridgeForumChannel | null => {
+    const forum = thread.parentId ? runtime?.channels.get(thread.parentId) : undefined
+    return forum && isForumChannel(forum) ? forum : null
+  }
+  client.on('threadCreate', async (thread, newlyCreated) => {
+    const forum = bridgedForumOf(thread)
+    if (!runtime || !forum) return
+    try {
+      // Our own web post being delivered: let the delivery re-key it first.
+      if (newlyCreated) await waitForPostDelivery(forum.id)
+      await syncPost(thread, true)
+      // THREAD_CREATE and the starter's MESSAGE_CREATE can come in either
+      // order (or the latter not at all for an uncached thread): fetch it.
+      if (!newlyCreated) return
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      if (await bridge.byDiscordMessageId(thread.id).catch(() => null)) return
+      const starter = await thread.fetchStarterMessage().catch(() => null)
+      const hook = runtime.webhooks.get(forum.id)
+      if (!starter || (starter.webhookId && hook && starter.webhookId === hook.id)) return
+      if (starter.author.bot && !starter.webhookId) return
+      await persistDiscordMessage(starter, { broadcast: true, forumId: forum.id })
+    } catch (error) {
+      console.error('[abulxt-discord] forum post create failed:', error instanceof Error ? error.message : error)
+    }
+  })
+  client.on('threadUpdate', (_old, thread) => {
+    if (!bridgedForumOf(thread)) return
+    void syncPost(thread, true).catch((error) => {
+      console.error('[abulxt-discord] forum post update failed:', error instanceof Error ? error.message : error)
+    })
+  })
+  client.on('threadDelete', async (thread) => {
+    if (!runtime) return
+    const forumId = thread.parentId || runtime.threads.get(thread.id) || null
+    if (!forumId || !runtime.channels.has(forumId)) return
+    runtime.threads.delete(thread.id)
+    // No per-message deletes follow a thread delete: tombstone them all.
+    const gone = await bridge.deletePostByThread(thread.id).catch(() => null)
+    if (gone) await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.post.deleted', { channelId: gone.forumId, postId: thread.id }).catch(() => {})
+  })
+  // Gained access to channels: ingest their active threads. Threads missing
+  // here are not deleted (they may be archived); the reconcile pass decides.
+  client.on('threadListSync', (threads) => {
+    for (const thread of threads.values()) {
+      if (!bridgedForumOf(thread)) continue
+      void syncPost(thread, true).catch(() => {})
+    }
   })
 
   // Directory freshness: member and role lifecycle events keep the bridge

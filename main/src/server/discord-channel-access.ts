@@ -46,6 +46,8 @@ export const DiscordPermission = {
   VIEW_CHANNEL: 1n << 10n,
   SEND_MESSAGES: 1n << 11n,
   READ_MESSAGE_HISTORY: 1n << 16n,
+  MANAGE_THREADS: 1n << 34n,
+  SEND_MESSAGES_IN_THREADS: 1n << 38n,
 } as const
 
 const ALL_PERMISSIONS = (1n << 64n) - 1n
@@ -54,14 +56,23 @@ export const DiscordChannelType = {
   GUILD_TEXT: 0,
   GUILD_CATEGORY: 4,
   GUILD_ANNOUNCEMENT: 5,
+  GUILD_FORUM: 15,
+  GUILD_MEDIA: 16,
 } as const
 
-// Channel types the web chatbox can render as a message list. Voice/stage
-// (2/13) have no text surface here, forum/media (15/16) are thread lists the
-// chatbox has no UI for, so they're left out rather than rendered as dead rows.
+// Channel types the web chatbox can render: a message list (text 0,
+// announcement 5) or a post list (forum 15, media 16; the forum view, see
+// holt docs/forum/contract.md). Voice/stage (2/13) have no text surface here,
+// so they're left out rather than rendered as dead rows. Threads (posts) are
+// never sidebar rows: they are absent from GET /guilds/{id}/channels and are
+// reached through their forum. A media channel only ever shows when the bot
+// bridges it (discord.bridge.mediaChannels): the chatbox lists bridged
+// channels only.
 export const RENDERABLE_CHANNEL_TYPES: ReadonlySet<number> = new Set([
   DiscordChannelType.GUILD_TEXT,
   DiscordChannelType.GUILD_ANNOUNCEMENT,
+  DiscordChannelType.GUILD_FORUM,
+  DiscordChannelType.GUILD_MEDIA,
 ])
 
 export interface DiscordOverwrite {
@@ -572,7 +583,8 @@ export function discordViewAllowed(access: Pick<ChannelAccess, 'known' | 'view'>
 
 // Can the caller VIEW this guild channel on Discord? Unknown channel ids (and
 // non-renderable types) resolve to view: false. `guildId` = the channel's
-// guild (perms resolved for that guild).
+// guild (perms resolved for that guild). A post (thread) is never in the
+// snapshot: callers pass its FORUM's id (discord-bridge-db.ts scopeFor).
 export async function channelAccess(
   user: { discord_id?: string | null } | null | undefined,
   perms: ChatPerms,
@@ -1038,7 +1050,10 @@ export function invalidateForChannelsChanged(seq: number, payload: Record<string
   visibilityCache.clear()
 }
 
+// The channel an event's visibility follows: a post's forum (`forumId`,
+// stamped by events.ts on every event inside a post), else the channel.
 function eventChannelId(payload: Record<string, unknown>): string | null {
+  if (typeof payload.forumId === 'string' && payload.forumId) return payload.forumId
   if (typeof payload.channelId === 'string' && payload.channelId) return payload.channelId
   const message = payload.message as { channelId?: unknown } | undefined
   if (message && typeof message.channelId === 'string' && message.channelId) return message.channelId
@@ -1073,7 +1088,9 @@ export function isGlobalPermsEvent(payload: Record<string, unknown>): boolean {
 
 // Per-type delivery rule for one bridge event to one socket:
 // - message / message.edited / message.deleted / reaction / typing / pins /
-//   lockdown: only to sockets that can VIEW the event's channel.
+//   lockdown: only to sockets that can VIEW the event's channel. An event in
+//   a forum post (forumId stamped) follows the FORUM's visibility; the
+//   bridge.post.* events carry channelId = the forum.
 // - timeout / untimeout / ban / unban (carry the target, reason, issuer): only
 //   to the affected webhook (any of its keys - web-only, linked, or Discord)
 //   and to moderators (in that channel's guild) who can VIEW the channel; a

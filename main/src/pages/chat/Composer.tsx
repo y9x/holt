@@ -1,4 +1,4 @@
-import { forwardRef, type ClipboardEvent, type KeyboardEvent, type MouseEvent } from 'react'
+import { forwardRef, type ClipboardEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { HolyText } from '../../components/common/HolyText'
 import { useHolyAttr } from '../../lib/holy-attr'
 import { EmojiSpriteButton } from './EmojiSpriteButton'
@@ -286,6 +286,11 @@ export interface ComposerProps {
   onOpenStickers: () => void
   /** Display names of everyone currently typing (caller already filtered out). */
   typingNames?: string[]
+  /** A notice strip stacked on top of the text area (forum post closed /
+      locked banners). */
+  notice?: ReactNode
+  /** The locked bar's text (default "This channel is locked."). */
+  lockedText?: string
 }
 
 /* Discord's typing indicator (typing_b88801 base_b88801 inTextChannel_b88801),
@@ -340,6 +345,8 @@ export const Composer = forwardRef<HTMLDivElement, ComposerProps>(function Compo
     onOpenGifs,
     onOpenStickers,
     typingNames = [],
+    notice,
+    lockedText = 'This channel is locked.',
   },
   inputRef,
 ) {
@@ -356,7 +363,7 @@ export const Composer = forwardRef<HTMLDivElement, ComposerProps>(function Compo
         <TypingIndicator names={typingNames} />
         <div className="lockdownBar" role="note" aria-label="Channel locked">
           <ComposerCircleAlertIcon size={18} />
-          <span><HolyText text="This channel is locked." /></span>
+          <span><HolyText text={lockedText} /></span>
         </div>
       </form>
     )
@@ -373,6 +380,7 @@ export const Composer = forwardRef<HTMLDivElement, ComposerProps>(function Compo
     <form className={`inputFields d-form${typingClass}`} onSubmit={onSubmit}>
       <TypingIndicator names={typingNames} />
       {mentionAutocomplete && <MentionAutocompletePopup ac={mentionAutocomplete} />}
+      {notice}
       <div className={`d-channelTextArea ${disabled ? 'd-channelTextAreaDisabled' : ''}`}>
         {replyBar && <ReplyBar bar={replyBar} />}
         <div className="d-scrollableContainer d-themedBackground">

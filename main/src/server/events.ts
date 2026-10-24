@@ -111,7 +111,13 @@ export function broadcastEphemeral(ownerKey: string, type: string, payload: Reco
 // bridge.perms.changed / bridge.onboarding.updated carry `guildId` too (null =
 // every guild). Stamped here, once, so no emit site can forget it. A channel
 // never changes guild, so the lookup is cached for the process lifetime.
-const channelGuildCache = new Map<string, string>()
+//
+// Forum posts (migration 038): an event whose channelId is a POST (a thread
+// id, or 'post:<pk>' while a web post is pending) gets the post's guild and
+// its `forumId` stamped too. Realtime visibility is the forum's
+// (discord-channel-access.ts allowBridgeEvent reads forumId first).
+interface ChannelScopeInfo { guildId: string; forumId: string | null }
+const channelGuildCache = new Map<string, ChannelScopeInfo>()
 
 function bridgePayloadChannelId(payload: Record<string, unknown>): string | null {
   if (typeof payload.channelId === 'string' && payload.channelId) return payload.channelId
@@ -119,28 +125,46 @@ function bridgePayloadChannelId(payload: Record<string, unknown>): string | null
   return message && typeof message.channelId === 'string' && message.channelId ? message.channelId : null
 }
 
-async function channelGuildId(channelId: string): Promise<string | null> {
+async function channelScopeInfo(channelId: string): Promise<ChannelScopeInfo | null> {
   const hit = channelGuildCache.get(channelId)
   if (hit) return hit
-  const { rows } = await query<{ guild_id: string }>(
-    `SELECT guild_id FROM discord_bridge_channel WHERE channel_id = $1`,
-    [channelId],
-  ).catch(() => ({ rows: [] as Array<{ guild_id: string }> }))
-  const guildId = rows[0]?.guild_id || null
-  if (guildId) {
-    channelGuildCache.set(channelId, guildId)
+  const pending = /^post:(\d{1,15})$/.exec(channelId)
+  const { rows } = pending
+    ? await query<{ guild_id: string; forum_id: string | null }>(
+      `SELECT guild_id, channel_id AS forum_id FROM discord_bridge_post WHERE id = $1`,
+      [Number(pending[1])],
+    ).catch(() => ({ rows: [] as Array<{ guild_id: string; forum_id: string | null }> }))
+    : await query<{ guild_id: string; forum_id: string | null }>(
+      `SELECT guild_id, NULL::text AS forum_id FROM discord_bridge_channel WHERE channel_id = $1
+       UNION ALL
+       SELECT guild_id, channel_id AS forum_id FROM discord_bridge_post WHERE thread_id = $1
+       LIMIT 1`,
+      [channelId],
+    ).catch(() => ({ rows: [] as Array<{ guild_id: string; forum_id: string | null }> }))
+  const info = rows[0]?.guild_id ? { guildId: rows[0].guild_id, forumId: rows[0].forum_id || null } : null
+  // A pending id is re-keyed on delivery, but its guild and forum never change.
+  if (info) {
+    channelGuildCache.set(channelId, info)
     if (channelGuildCache.size > 5000) channelGuildCache.delete(channelGuildCache.keys().next().value as string)
   }
-  return guildId
+  return info
 }
 
 export async function withBridgeGuild(type: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-  if (!type.startsWith('bridge.') || 'guildId' in payload) return payload
+  if (!type.startsWith('bridge.')) return payload
   const channelId = bridgePayloadChannelId(payload)
   if (channelId) {
-    const guildId = await channelGuildId(channelId)
-    return guildId ? { ...payload, guildId } : payload
+    const needGuild = !('guildId' in payload)
+    const needForum = !('forumId' in payload)
+    if (!needGuild && !needForum) return payload
+    const info = await channelScopeInfo(channelId)
+    if (!info) return payload
+    const out = { ...payload }
+    if (needGuild) out.guildId = info.guildId
+    if (needForum && info.forumId) out.forumId = info.forumId
+    return out
   }
+  if ('guildId' in payload) return payload
   if (type === 'bridge.perms.changed' || type === 'bridge.onboarding.updated') return { ...payload, guildId: null }
   return payload
 }

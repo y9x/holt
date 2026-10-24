@@ -18,6 +18,7 @@ import {
   Perm,
   hasPerm,
   applyDiscordChannelPerms,
+  canManagePosts,
   chatPermsForUser,
   chatPermsForChannel,
   chatPermsForIdentity,
@@ -34,6 +35,8 @@ import {
   webhookKey,
   webhookKeys,
   writeDenialCore,
+  validateTagChange,
+  ForumErrorCode,
   type ActiveTimeout,
   type EffectiveOverwrite,
   type ModerationAction,
@@ -52,7 +55,7 @@ import {
   type NeutralizeReason,
   type PingClass,
 } from './discord-mention-limits.js'
-import { fetchMemberProfile } from './discord-roles.js'
+import { discordFetch, fetchMemberProfile } from './discord-roles.js'
 import { writeSealedJson } from './api-crypto.ts'
 import { authorStyleFor, authorStylesFor, roleColorsFor, webAuthorStyle, type AuthorStyle } from './discord-author-style.js'
 import { guildTagProfile } from './discord-guild-tag.js'
@@ -101,7 +104,7 @@ function bypassesOverwrites(tier: string): boolean {
   return tier === 'admin' || tier === 'owner'
 }
 
-const ALL_ALLOWED: EffectiveOverwrite = { view: true, send: true, react: true }
+const ALL_ALLOWED: EffectiveOverwrite = { view: true, send: true, react: true, reply: true }
 
 // The caller's effective overwrite for a channel (admins/owners bypass).
 async function overwriteFor(
@@ -121,15 +124,46 @@ async function overwriteFor(
 // denies) → active timeout (VIEW-only). Bridge webhook overwrites and the
 // lockdown are applied on top by writeDenialCore via `overwrite` / `locked`.
 // See applyDiscordChannelPerms in discord-chat-perms.ts for the precedence.
+// `channelId` is the channel the gates run on: for a forum post, its FORUM
+// (threads inherit the forum's overwrites and timeouts); `context` 'post'
+// then maps Discord's SEND_MESSAGES_IN_THREADS (replying).
 async function channelPermsFor(
   user: ChatUser | null | undefined,
   basePerms: ResolvedChatPerms,
   channelId: string,
   subject: WebhookSubject,
   guildId: string,
+  context: 'channel' | 'post' = 'channel',
 ): Promise<{ perms: ResolvedChatPerms; timeout: ActiveTimeout | null }> {
   const discord = await discordChannelBits(user, basePerms, channelId, guildId).catch(() => null)
-  return chatPermsForChannel(applyDiscordChannelPerms(basePerms, discord), channelId, subject)
+  return chatPermsForChannel(applyDiscordChannelPerms(basePerms, discord, context), channelId, subject)
+}
+
+// What a channel-scoped request names: an ordinary channel, a forum (posts
+// only, no messages) or a post inside a forum. Every gate runs on
+// scope.channel (the forum for a post); messages live under scope.id.
+function scopeKind(scope: bridge.BridgeScope): 'channel' | 'forum' | 'post' {
+  return scope.post ? 'post' : bridge.isForumType(scope.channel.type) ? 'forum' : 'channel'
+}
+
+// A web post that has not reached Discord yet takes no messages (contract:
+// 409 for sending to a `post:<n>` id).
+const PENDING_POST = { error: 'This post has not reached Discord yet.' } as const
+function pendingPost(scope: bridge.BridgeScope | null): boolean {
+  return Boolean(scope?.post?.pending)
+}
+
+// A message landed in a post: bump "Recently Active" and push the refreshed
+// card (bridge.post.updated: counts, activity) to the forum's viewers.
+async function touchPostActivity(postId: string, at: string | Date): Promise<void> {
+  await bridge.touchPost(postId, new Date(at)).catch(() => false)
+  const post = await bridge.postFor(postId).catch(() => null)
+  if (post && !post.deletedAt) await bridge.emitPostEvent('bridge.post.updated', post).catch(() => {})
+}
+
+// A forum post's state for the write gate.
+function gatePost(scope: bridge.BridgeScope | null): { locked: boolean; archived: boolean } | null {
+  return scope?.post ? { locked: scope.post.locked, archived: scope.post.archived } : null
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown) {
@@ -575,7 +609,7 @@ type ResolvedChatPerms = Awaited<ReturnType<typeof chatPermsForUser>>
 const VIEW_DENIED = { error: 'You do not have permission to view this channel.', code: DiscordError.MISSING_ACCESS } as const
 
 type WriteGate =
-  | { ok: true; perms: ResolvedChatPerms; basePerms: ResolvedChatPerms; timeout: ActiveTimeout | null; subject: WebhookSubject }
+  | { ok: true; perms: ResolvedChatPerms; basePerms: ResolvedChatPerms; timeout: ActiveTimeout | null; subject: WebhookSubject; scope: bridge.BridgeScope }
   | { ok: false; status: number; body: Record<string, unknown> }
 
 // THE write gate. Every write path (send, edit, forward, typing, react,
@@ -587,20 +621,27 @@ type WriteGate =
 // SEND_MESSAGES + send overwrite + channel lock for composing actions,
 // ADD_REACTIONS + react overwrite for reactions, Manage Messages for staff
 // message actions. The decision itself is the pure writeDenialCore.
+// A forum post (scope.post) is gated on its FORUM: the forum's Discord
+// permissions (SEND_MESSAGES_IN_THREADS for replies), overwrites, timeouts,
+// lockdown and bans, plus the post's locked / archived state. `extra.tags`
+// are a new post's tags ('post-create').
 async function writeDenial(
   user: ChatUser,
   ip: string,
-  channel: bridge.BridgeChannel | null,
+  scope: bridge.BridgeScope | null,
   action: WriteAction,
+  extra: { tags?: string[] } = {},
 ): Promise<WriteGate> {
-  if (!channel || !channel.enabled) {
+  const channel = scope?.channel ?? null
+  if (!scope || !channel || !channel.enabled) {
     return { ok: false, status: 404, body: { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL } }
   }
+  const kind = scopeKind(scope)
   const subject = subjectOfUser(user)
   const guildId = channel.guildId
   const basePerms = await chatPermsForUser(user, guildId)
   const [{ perms, timeout }, banned, viewDenied] = await Promise.all([
-    channelPermsFor(user, basePerms, channel.channelId, subject, guildId),
+    channelPermsFor(user, basePerms, channel.channelId, subject, guildId, kind === 'post' ? 'post' : 'channel'),
     bridgeBanFor(user, ip, guildId),
     discordViewDenied(user, basePerms, channel.channelId, guildId, channel.everyoneCanView),
   ])
@@ -616,9 +657,12 @@ async function writeDenial(
     overwrite,
     locked: Boolean(channel.locked),
     timeout,
+    scope: kind,
+    post: gatePost(scope),
+    tags: action === 'post-create' && channel.forum && extra.tags ? { forum: channel.forum, applied: extra.tags } : null,
   })
   if (denial) return { ok: false, status: denial.status, body: denial.body }
-  return { ok: true, perms, basePerms, timeout, subject }
+  return { ok: true, perms, basePerms, timeout, subject, scope }
 }
 
 // Discord-side VIEW_CHANNEL check (live guild roles + channel overwrites, see
@@ -638,7 +682,7 @@ async function discordViewDenied(
 }
 
 type ViewGate =
-  | { ok: true; perms: ResolvedChatPerms; bridged: bridge.BridgeChannel; access: ChannelAccess; guildId: string }
+  | { ok: true; perms: ResolvedChatPerms; bridged: bridge.BridgeChannel; scope: bridge.BridgeScope; access: ChannelAccess; guildId: string }
   | { ok: false; status: number; body: Record<string, unknown> }
 
 // The read gate every channel-scoped GET shares (history, pins, profile,
@@ -647,7 +691,9 @@ type ViewGate =
 // The guild is the channel's own (discord_bridge_channel.guild_id) and perms
 // are resolved there. Readable when the caller can VIEW the channel on
 // Discord AND holds the chat VIEW_MESSAGES bit with no webhook view-deny
-// overwrite (admins/owners bypass overwrites).
+// overwrite (admins/owners bypass overwrites). A forum post (a thread id or a
+// pending `post:<n>`) is readable exactly when its forum is: `bridged` is the
+// forum, `scope.id` the post.
 async function viewGate(
   user: ChatUser | null | undefined,
   channelId: string,
@@ -655,15 +701,16 @@ async function viewGate(
   const unknown = { ok: false as const, status: 404, body: { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL } }
   const denied = { ok: false as const, status: 403, body: { ...VIEW_DENIED } }
   if (!channelId) return unknown
-  const row = await bridge.channelFor(channelId).catch(() => null)
+  const scope = await bridge.scopeFor(channelId).catch(() => null)
+  const row = scope?.channel
   const bridged = row && row.enabled && row.guildId ? row : null
-  if (!bridged) return unknown
+  if (!scope || !bridged) return unknown
   const perms = await chatPermsForUser(user, bridged.guildId)
-  const access = await channelAccess(user, perms, channelId, bridged.guildId)
+  const access = await channelAccess(user, perms, bridged.channelId, bridged.guildId)
   if (!discordViewAllowed(access, bridged.everyoneCanView)) return denied
-  const overwrite = await overwriteFor(channelId, subjectOfUser(user), perms)
+  const overwrite = await overwriteFor(bridged.channelId, subjectOfUser(user), perms)
   if (!hasPerm(perms.permissions, Perm.VIEW_MESSAGES) || !overwrite.view) return denied
-  return { ok: true, perms, bridged, access, guildId: bridged.guildId }
+  return { ok: true, perms, bridged, scope, access, guildId: bridged.guildId }
 }
 
 // The snapshot a forward carries: the source message's content/attachments/
@@ -1081,6 +1128,18 @@ function rewriteForForeignPage(response: ServerResponse): void {
   }
 }
 
+// A refused Discord call (post-moderate): Discord's status and JSON code
+// where they map, else 502.
+async function discordFailure(response: ServerResponse, res: Response): Promise<void> {
+  const body = (await res.json().catch(() => null)) as { code?: number; message?: string } | null
+  if (res.status === 403) return sendJson(response, 403, { error: 'Missing Permissions', code: DiscordError.MISSING_PERMISSIONS })
+  if (res.status === 404) return sendJson(response, 404, { error: 'Unknown post.', code: DiscordError.UNKNOWN_CHANNEL })
+  if (res.status === 400 && typeof body?.code === 'number') {
+    return sendJson(response, 400, { error: body.message || 'Discord refused the change.', code: body.code })
+  }
+  return sendJson(response, 502, { error: `Discord refused the change (HTTP ${res.status}).` })
+}
+
 export function discordBridgeApi(): Plugin {
   function register(server: { middlewares: ViteDevServer['middlewares'] }) {
     watchWebIdentityChanges()
@@ -1152,7 +1211,10 @@ export function discordBridgeApi(): Plugin {
             locked: Boolean(known?.locked),
             bridged: true,
             guildId,
+            // A forum's newest message in any post (bridge.lastMessageIds).
             lastMessageId: lastIds.get(c.id) ?? null,
+            // Forum / media channels: tags, defaults, guidelines (contract.md).
+            ...(known?.forum ? { forum: { ...known.forum, guidelines: c.topic || known.forum.guidelines } } : {}),
           }
         }
         const layout = config.discord?.botToken
@@ -1176,7 +1238,7 @@ export function discordBridgeApi(): Plugin {
         const fallback = bridged
           .filter((c) => c.everyoneCanView && viewableBridged.has(c.channelId))
           .sort((a, b) => (a.parentId || '').localeCompare(b.parentId || '') || a.position - b.position)
-          .map((c) => channelOut({ id: c.channelId, name: c.name, topic: c.topic, position: c.position, type: 0, parentId: null }))
+          .map((c) => channelOut({ id: c.channelId, name: c.name, topic: c.topic, position: c.position, type: c.type, parentId: null }))
         return sendSealedJson(req, response, { configured, categories: [], channels: fallback })
       }
 
@@ -1257,7 +1319,7 @@ export function discordBridgeApi(): Plugin {
         if (req.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed' })
         const channelId = url.searchParams.get('channel') || ''
         // The channel's guild (any bridged row), else the default guild.
-        const exprChannel = channelId ? await bridge.channelFor(channelId).catch(() => null) : null
+        const exprChannel = channelId ? (await bridge.scopeFor(channelId).catch(() => null))?.channel ?? null : null
         const perms = await chatPermsForUser(identity.user, exprChannel?.guildId || (await defaultBridgedGuild()))
         const config = await loadConfig()
         const canSendEmbeds = hasPerm(perms.permissions, Perm.SEND_EMBEDS)
@@ -1279,7 +1341,13 @@ export function discordBridgeApi(): Plugin {
       if (path === 'perms') {
         if (req.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed' })
         const channelId = url.searchParams.get('channel') || ''
-        const channel = channelId ? await bridge.channelFor(channelId) : null
+        // A forum post resolves to its forum: every gate below runs there.
+        const scope = channelId ? await bridge.scopeFor(channelId) : null
+        const channel = scope?.channel ?? null
+        const gateChannelId = channel?.channelId || channelId
+        const kind = scope ? scopeKind(scope) : 'channel'
+        const permContext = kind === 'post' ? 'post' : 'channel'
+        const post = scope?.post ?? null
         let permsGuildId: string
         if (channelId) {
           permsGuildId = channel?.guildId || (await defaultBridgedGuild())
@@ -1298,18 +1366,18 @@ export function discordBridgeApi(): Plugin {
         // Discord's channel permission math over the caller's effective roles
         // applies to guests too (a guest's onboarding role may grant SEND).
         const { perms, timeout } = channelId && identity.user
-          ? await channelPermsFor(identity.user, basePerms, channelId, subject, permsGuildId)
+          ? await channelPermsFor(identity.user, basePerms, gateChannelId, subject, permsGuildId, permContext)
           : channelId
-            ? { perms: applyDiscordChannelPerms(basePerms, await discordChannelBits(identity.user, basePerms, channelId, permsGuildId).catch(() => null)), timeout: null }
+            ? { perms: applyDiscordChannelPerms(basePerms, await discordChannelBits(identity.user, basePerms, gateChannelId, permsGuildId).catch(() => null), permContext), timeout: null }
             : { perms: basePerms, timeout: null }
-        const overwrites = channelId
-          ? await overwriteFor(channelId, subject, perms)
-          : { view: true, send: false, react: true }
+        const overwrites: EffectiveOverwrite = channelId
+          ? await overwriteFor(gateChannelId, subject, perms)
+          : { view: true, send: false, react: true, reply: false }
         const locked = Boolean(channel?.locked)
         // Discord-side VIEW_CHANNEL (live roles + overwrites), and writes only
         // ever land in bridged channels: an unbridged or unviewable channel is
         // read-only (or invisible) regardless of the chat bitfield.
-        const discordView = channelId ? !(await discordViewDenied(identity.user, basePerms, channelId, permsGuildId, Boolean(channel?.everyoneCanView))) : true
+        const discordView = channelId ? !(await discordViewDenied(identity.user, basePerms, gateChannelId, permsGuildId, Boolean(channel?.everyoneCanView))) : true
         const writable = !channelId || (Boolean(channel?.enabled) && discordView)
         const banned = identity.user ? await bridgeBanFor(identity.user, identity.ip, permsGuildId) : null
         const gateInput = {
@@ -1322,11 +1390,19 @@ export function discordBridgeApi(): Plugin {
           overwrite: overwrites,
           locked,
           timeout,
+          scope: kind,
+          post: gatePost(scope),
         }
-        const canSendFlag = writable && Boolean(identity.user) && !writeDenialCore({ ...gateInput, action: 'send' })
+        // A pending post takes nothing yet; a forum takes posts, not messages
+        // (writeDenialCore refuses 'send' there). In a post, canSend = canReply.
+        const usable = writable && Boolean(identity.user) && !pendingPost(scope)
+        const canSendFlag = usable && !writeDenialCore({ ...gateInput, action: 'send' })
         const canReactFlag = channelId
-          ? writable && Boolean(identity.user) && !writeDenialCore({ ...gateInput, action: 'react' })
+          ? usable && !writeDenialCore({ ...gateInput, action: 'react' })
           : hasPerm(perms.permissions, Perm.ADD_REACTIONS)
+        const inForum = kind !== 'channel'
+        const canCreatePostFlag = inForum && writable && Boolean(identity.user)
+          && !writeDenialCore({ ...gateInput, scope: 'forum', post: null, action: 'post-create' })
         // Mention-permission flags (drive the composer's @everyone/@here and
         // role autocomplete gating). MENTION_EVERYONE implies MENTION_ROLES,
         // matching Discord's single-permission semantics. The timeout-reduced
@@ -1359,6 +1435,12 @@ export function discordBridgeApi(): Plugin {
           webhookKeys: webhookKeys(subject),
           canView: hasPerm(perms.permissions, Perm.VIEW_MESSAGES) && overwrites.view && discordView,
           canSend: canSendFlag,
+          // Forum channels (contract.md): create a post here / reply in this
+          // post / staff post actions (lock, pin, archive, tags, rename, delete).
+          canCreatePost: canCreatePostFlag,
+          canReply: kind === 'post' && canSendFlag,
+          canManagePosts: inForum && !banned && canManagePosts(perms.permissions),
+          ...(post ? { post: { id: post.id, forumId: post.forumId, locked: post.locked, archived: post.archived, pinned: post.pinned, ownerKey: post.ownerKey } } : {}),
           // Email verification is reported explicitly so the composer can say
           // "verify your email" (not a permission error) when that is the only
           // thing blocking sends in a channel that would otherwise allow them.
@@ -1377,7 +1459,7 @@ export function discordBridgeApi(): Plugin {
           embedSuppress: {
             bridged: Boolean(channel?.enabled),
             staff: canModerateHere && (hasPerm(perms.permissions, Perm.MANAGE_WEBHOOKS) || hasPerm(perms.permissions, Perm.BAN_WEBHOOKS)),
-            botManageMessages: channelId && channel?.enabled ? await botCanManageMessages(channelId, channel.guildId) : false,
+            botManageMessages: channelId && channel?.enabled ? await botCanManageMessages(gateChannelId, channel.guildId) : false,
             selfKeys: [...(identity.user ? callerKeys(identity.user) : [identity.ownerKey]), ...(discordId ? [`discord:${discordId}`] : [])],
           },
           banned,
@@ -1406,12 +1488,15 @@ export function discordBridgeApi(): Plugin {
         }
         const target = await resolveWebhookTarget(parsed).catch(() => null)
         if (!target) return sendJson(response, 404, { error: 'Unknown webhook.' })
-        const actorGate = await writeDenial(identity.user, identity.ip, targetGate.bridged, 'moderate')
+        const actorGate = await writeDenial(identity.user, identity.ip, targetGate.scope, 'moderate')
         const targetPerms = await chatPermsForIdentity(target, targetGate.guildId)
         const may = (action: ModerationAction) => actorGate.ok
           && !moderationDenial(action, { perms: actorGate.perms, subject: actorGate.subject }, { perms: targetPerms, subject: target })
         const staff = may('timeout') || may('ban') || may('unban') || may('webhook-perm')
-        const overwrite = staff ? await memberOverwrite(channelId, target) : null
+        // Timeouts and overwrites live on the channel the gates run on (a
+        // post's forum).
+        const modChannelId = targetGate.bridged.channelId
+        const overwrite = staff ? await memberOverwrite(modChannelId, target) : null
         return sendJson(response, 200, {
           key: webhookKey(target),
           keys: webhookKeys(target),
@@ -1426,7 +1511,7 @@ export function discordBridgeApi(): Plugin {
           canUnban: may('unban'),
           canManageWebhook: may('webhook-perm'),
           // Moderation state is staff-only detail.
-          timeout: staff ? await activeTimeout(channelId, target) : null,
+          timeout: staff ? await activeTimeout(modChannelId, target) : null,
           banned: staff ? await webhookBanFor(target, targetGate.guildId) : null,
           overwrite: overwrite ? { allow: overwrite.allow.toString(), deny: overwrite.deny.toString() } : null,
           // Ping-limit counters since the app server started (in-memory):
@@ -1463,7 +1548,9 @@ export function discordBridgeApi(): Plugin {
         const afterRaw = cursorParam('after')
         const aroundRaw = cursorParam('around')
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 50, 1), 100)
-        const page = await bridge.historyWindow(channelId, {
+        // A post's messages live under its id (a delivered `post:<n>` resolves
+        // to the thread); a forum itself has none.
+        const page = await bridge.historyWindow(gate.scope.id, {
           before: beforeRaw ? Number(beforeRaw) : null,
           after: afterRaw ? Number(afterRaw) : null,
           around: aroundRaw,
@@ -1601,7 +1688,7 @@ export function discordBridgeApi(): Plugin {
         const sort: bridge.SearchSort = sortRaw === 'oldest' || sortRaw === 'relevance' ? sortRaw : 'newest'
         const offsetRaw = Number(sp.get('offset') || 0)
         const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.min(SEARCH_MAX_OFFSET, Math.trunc(offsetRaw))) : 0
-        if (!content.trim() && !authorIds.length && !mentionIds.length && !authorNames.length && !mentionNames.length && !has.length && !notHas.length && !authorTypes.length && !notAuthorTypes.length && !minTime && !maxTime && !requestedChannels.length) {
+        if (!content.trim() && !authorIds.length && !mentionIds.length && !authorNames.length && !mentionNames.length && !has.length && !notHas.length && !authorTypes.length && !notAuthorTypes.length && !minTime && !maxTime && !sp.getAll('channel_id').length) {
           return sendJson(response, 400, { error: 'Search query is empty.' })
         }
 
@@ -1613,9 +1700,22 @@ export function discordBridgeApi(): Plugin {
         }
 
         const viewable = await viewableBridgedChannels(identity.user, searchGuild || undefined)
-        const viewableIds = new Set(viewable.map((c) => c.channelId))
-        const channelIds = requestedChannels.length
-          ? requestedChannels.filter((id) => viewableIds.has(id))
+        // A forum's messages live in its posts: a viewable forum makes its
+        // posts searchable (and `channel_id` may name a forum or one post).
+        const forums = viewable.filter((c) => bridge.isForumType(c.type))
+        const posts = await bridge.postsOfForums(forums.map((c) => c.channelId)).catch(() => [] as Array<{ id: string; forumId: string; name: string }>)
+        const forumGuild = new Map(forums.map((c) => [c.channelId, c.guildId]))
+        const postsByForum = new Map<string, string[]>()
+        for (const p of posts) postsByForum.set(p.forumId, [...(postsByForum.get(p.forumId) || []), p.id])
+        const viewableIds = new Set([...viewable.filter((c) => !bridge.isForumType(c.type)).map((c) => c.channelId), ...posts.map((p) => p.id)])
+        const channelGuild = new Map<string, string>([
+          ...viewable.map((c): [string, string] => [c.channelId, c.guildId]),
+          ...posts.map((p): [string, string] => [p.id, forumGuild.get(p.forumId) || '']),
+        ])
+        const requestedPostIds = [...new Set(sp.getAll('channel_id'))].filter((id) => bridge.parsePendingPostId(id) !== null).slice(0, 50)
+        const requested = [...requestedChannels, ...requestedPostIds].flatMap((id) => postsByForum.get(id) || [id])
+        const channelIds = requested.length
+          ? [...new Set(requested.filter((id) => viewableIds.has(id)))]
           : [...viewableIds]
         if (!channelIds.length) {
           return sendJson(response, 200, { totalResults: 0, offset, limit: SEARCH_PAGE_SIZE, messages: [], channels: [] })
@@ -1623,7 +1723,7 @@ export function discordBridgeApi(): Plugin {
         try {
           const { total, messages } = await bridge.searchMessages({
             channelIds,
-            guildIds: [...new Set(viewable.filter((c) => channelIds.includes(c.channelId)).map((c) => c.guildId))],
+            guildIds: [...new Set(channelIds.map((id) => channelGuild.get(id) || '').filter(Boolean))],
             content,
             authorIds,
             mentionIds,
@@ -1639,14 +1739,18 @@ export function discordBridgeApi(): Plugin {
             offset,
             limit: SEARCH_PAGE_SIZE,
           })
-          const names = new Map(viewable.map((c) => [c.channelId, c.name]))
+          const names = new Map([...viewable.map((c): [string, string] => [c.channelId, c.name]), ...posts.map((p): [string, string] => [p.id, p.name])])
           const used = [...new Set(messages.map((m) => m.channelId))]
           return sendJson(response, 200, {
             totalResults: total,
             offset,
             limit: SEARCH_PAGE_SIZE,
             messages: await refreshMessageMedia(messages, { persist: true }),
-            channels: used.map((id) => ({ channelId: id, name: names.get(id) || 'unknown' })),
+            // A post result also names its forum (the jump target's parent).
+            channels: used.map((id) => {
+              const forumId = posts.find((p) => p.id === id)?.forumId
+              return { channelId: id, name: names.get(id) || 'unknown', ...(forumId ? { forumId } : {}) }
+            }),
           })
         } catch (err) {
           // 57014 = query_canceled (statement_timeout).
@@ -1956,13 +2060,17 @@ export function discordBridgeApi(): Plugin {
 
         const body = await readBody(req)
         const channelId = typeof body.channelId === 'string' ? body.channelId : ''
-        const channel = channelId ? await bridge.channelFor(channelId) : null
+        // A post id sends a reply in that post (gated on its forum).
+        const scope = channelId ? await bridge.scopeFor(channelId) : null
+        if (pendingPost(scope)) return sendJson(response, 409, { ...PENDING_POST })
         // The shared write gate: bridged channel, email verification, ban,
         // VIEW, timeout, SEND_MESSAGES + overwrites, lockdown (staff bypass;
-        // admins/owners bypass overwrites - Discord Administrator).
-        const sendGate = await writeDenial(identity.user, identity.ip, channel, 'send')
+        // admins/owners bypass overwrites - Discord Administrator). In a post:
+        // SEND_IN_POSTS and the post's locked state; a forum takes no messages.
+        const sendGate = await writeDenial(identity.user, identity.ip, scope, 'send')
         if (!sendGate.ok) return sendJson(response, sendGate.status, sendGate.body)
-        if (!channel) return sendJson(response, 404, { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL })
+        if (!scope) return sendJson(response, 404, { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL })
+        const channel = scope.channel
         const sendPerms = sendGate.perms
 
         const rawContent = sanitizeContent(typeof body.content === 'string' ? body.content : '')
@@ -1983,7 +2091,7 @@ export function discordBridgeApi(): Plugin {
         if (spam.blocked) {
           mentionLimiter.noteBlocked(pingKey)
           logMentionLimit(pingKey, 'automod-block', `Mention spam: ${spam.count} unique mentions (limit ${spam.limit})`, {
-            channelId: channel.channelId, count: spam.count, limit: spam.limit, content: content.slice(0, 300),
+            channelId: scope.id, count: spam.count, limit: spam.limit, content: content.slice(0, 300),
           })
           return sendJson(response, 400, automodBlockedBody(false, spam.count, spam.limit))
         }
@@ -1998,7 +2106,7 @@ export function discordBridgeApi(): Plugin {
         // OFF the bot delivers replied_user=false and nothing highlights.
         let replyMention = replyTo ? body.replyMention !== false : true
         if (replyTo && replyMention) {
-          const replyEntry = await replyMentionFor(replyTo, channel.channelId)
+          const replyEntry = await replyMentionFor(replyTo, scope.id)
           if (replyEntry) mentions.push(replyEntry)
         }
         // Ping budget + per-target protection: the message still sends; the
@@ -2021,7 +2129,7 @@ export function discordBridgeApi(): Plugin {
         const authorAvatar = await callerAvatar(user)
 
         const { message, existed } = await bridge.recordMessage({
-          channelId: channel.channelId,
+          channelId: scope.id,
           direction: 'web',
           authorKey: callerKey(user),
           authorName,
@@ -2039,11 +2147,12 @@ export function discordBridgeApi(): Plugin {
         })
         if (limited.neutralized.length) {
           logMentionLimit(pingKey, 'mention-limit', neutralizedReason(limited.neutralized), {
-            channelId: channel.channelId, messageId: message.id, neutralized: limited.neutralized.slice(0, 25),
+            channelId: scope.id, messageId: message.id, neutralized: limited.neutralized.slice(0, 25),
           })
         }
         if (!existed) {
           await bridge.broadcastMessage(message)
+          if (scope.post) await touchPostActivity(scope.id, message.createdAt)
           // Hand the message to the bot service for webhook delivery. The bot
           // LISTENs on this channel; its periodic sweep is the backstop if the
           // notification is missed (row stays undelivered until then).
@@ -2100,10 +2209,11 @@ export function discordBridgeApi(): Plugin {
         }
         // Destination: the shared write gate (bridged only, email, ban, VIEW,
         // timeout, SEND + overwrites, lock).
-        const channel = await bridge.channelFor(channelId)
-        const forwardGate = await writeDenial(identity.user, identity.ip, channel, 'forward')
+        const destination = await bridge.scopeFor(channelId)
+        if (pendingPost(destination)) return sendJson(response, 409, { ...PENDING_POST })
+        const forwardGate = await writeDenial(identity.user, identity.ip, destination, 'forward')
         if (!forwardGate.ok) return sendJson(response, forwardGate.status, forwardGate.body)
-        if (!channel) return sendJson(response, 404, { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL })
+        if (!destination) return sendJson(response, 404, { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL })
         const viewPerms = forwardGate.perms
 
         // The jump link points at the SOURCE message's guild (a forward may
@@ -2115,7 +2225,7 @@ export function discordBridgeApi(): Plugin {
         const clientId = typeof body.clientId === 'string' && body.clientId.length <= 64 ? body.clientId : null
         const user = identity.user
         const { message, existed } = await bridge.recordMessage({
-          channelId: channel.channelId,
+          channelId: destination.id,
           direction: 'web',
           authorKey: callerKey(user),
           authorName: effectiveChatName(user.username, user.chat_display_name),
@@ -2129,6 +2239,7 @@ export function discordBridgeApi(): Plugin {
         })
         if (!existed) {
           await bridge.broadcastMessage(message)
+          if (destination.post) await touchPostActivity(destination.id, message.createdAt)
           await query(
             `SELECT pg_notify($1, $2)`,
             [OUTBOX_NOTIFY_CHANNEL, JSON.stringify({ id: message.id })],
@@ -2177,10 +2288,12 @@ export function discordBridgeApi(): Plugin {
         // chat bit + view overwrite), active timeout, SEND_MESSAGES + send
         // overwrite (role + webhook member overwrites), and the channel lock.
         // Permissions granted when the message was sent don't carry over.
-        const channel = await bridge.channelFor(target.channelId)
-        const editGate = await writeDenial(identity.user, identity.ip, channel, 'edit')
+        // In a post: Discord's archived (50083) / locked rules apply.
+        const editScope = await bridge.scopeFor(target.channelId)
+        const editGate = await writeDenial(identity.user, identity.ip, editScope, 'edit')
         if (!editGate.ok) return sendJson(response, editGate.status, editGate.body)
-        if (!channel) return sendJson(response, 404, { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL })
+        if (!editScope) return sendJson(response, 404, { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL })
+        const channel = editScope.channel
         // Permission-aware mention pass - identical to the send path, over the
         // same channel-effective perms: an edit can't smuggle in an
         // @everyone/role ping the caller couldn't send directly.
@@ -2200,7 +2313,7 @@ export function discordBridgeApi(): Plugin {
         if (spam.blocked) {
           mentionLimiter.noteBlocked(pingKey)
           logMentionLimit(pingKey, 'automod-block', `Mention spam (edit): ${spam.count} unique mentions (limit ${spam.limit})`, {
-            channelId: channel.channelId, messageId, count: spam.count, limit: spam.limit, content: content.slice(0, 300),
+            channelId: target.channelId, messageId, count: spam.count, limit: spam.limit, content: content.slice(0, 300),
           })
           return sendJson(response, 400, automodBlockedBody(true, spam.count, spam.limit))
         }
@@ -2215,7 +2328,7 @@ export function discordBridgeApi(): Plugin {
         const mentions = limited.mentions
         if (limited.neutralized.some((n) => n.reason !== 'edit')) {
           logMentionLimit(pingKey, 'mention-limit', neutralizedReason(limited.neutralized), {
-            channelId: channel.channelId, messageId, edit: true, neutralized: limited.neutralized.slice(0, 25),
+            channelId: target.channelId, messageId, edit: true, neutralized: limited.neutralized.slice(0, 25),
           })
         }
 
@@ -2271,8 +2384,10 @@ export function discordBridgeApi(): Plugin {
         // webhook is view-only), then the dedicated ADD_REACTIONS bit + react
         // overwrite (1:1 with Discord: a member who can't SEND can still
         // react; a channel lock doesn't block reactions).
-        const reactChannel = await bridge.channelFor(message.channelId)
-        const reactGate = await writeDenial(identity.user, identity.ip, reactChannel, 'react')
+        const reactScope = await bridge.scopeFor(message.channelId)
+        // Reactions on a pending post's starter could never reach Discord.
+        if (pendingPost(reactScope)) return sendJson(response, 409, { ...PENDING_POST })
+        const reactGate = await writeDenial(identity.user, identity.ip, reactScope, 'react')
         if (!reactGate.ok) return sendJson(response, reactGate.status, reactGate.body)
 
         const reactorKey = callerKey(identity.user)
@@ -2305,6 +2420,9 @@ export function discordBridgeApi(): Plugin {
           emoji,
           reactions,
         })
+        // A post's starter reactions show on its card.
+        const reactedPost = reactScope?.post
+        if (reactedPost && reactedPost.starterMessageId === messageId) await bridge.emitPostEvent('bridge.post.updated', reactedPost).catch(() => {})
         return sendJson(response, 200, { messageId, emoji, reactions, reacted: !alreadyReacted })
       }
 
@@ -2332,8 +2450,8 @@ export function discordBridgeApi(): Plugin {
         if (!Number.isSafeInteger(messageId) || messageId <= 0) return sendJson(response, 400, { error: 'Missing message.' })
         const target = await bridge.messageFor(messageId)
         if (!target || target.deletedAt) return sendJson(response, 404, { error: 'Unknown Message', code: DiscordError.UNKNOWN_MESSAGE })
-        const suppressChannel = await bridge.channelFor(target.channelId)
-        if (!suppressChannel || !suppressChannel.enabled) return sendJson(response, 404, { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL })
+        const suppressScope = await bridge.scopeFor(target.channelId)
+        if (!suppressScope || !suppressScope.channel.enabled) return sendJson(response, 404, { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL })
         // The shared write gate: your own message ('own-message': ban + VIEW;
         // a timeout doesn't stop you tidying your own messages, like Discord)
         // or anyone's with Manage Messages ('manage-messages': + timeout +
@@ -2341,13 +2459,19 @@ export function discordBridgeApi(): Plugin {
         const linked = identity.user.discord_id || null
         const isAuthor = (target.direction === 'web' && authoredBy(target.authorKey, identity.user))
           || (target.direction === 'discord' && linked !== null && target.authorKey === `discord:${linked}`)
-        const suppressGate = await writeDenial(identity.user, identity.ip, suppressChannel, isAuthor ? 'own-message' : 'manage-messages')
+        const suppressGate = await writeDenial(identity.user, identity.ip, suppressScope, isAuthor ? 'own-message' : 'manage-messages')
         if (!suppressGate.ok) {
           if (suppressGate.body.code === DiscordError.MISSING_ACCESS) return sendJson(response, 404, { error: 'Unknown Message', code: DiscordError.UNKNOWN_MESSAGE })
           return sendJson(response, suppressGate.status, suppressGate.body)
         }
         if (!target.discordMessageId) return sendJson(response, 409, { error: 'This message has not reached Discord yet.' })
-        const result = await suppressOnDiscord({ direction: target.direction, channelId: target.channelId, discordMessageId: target.discordMessageId })
+        // In a post the forum's webhook / permissions apply, on the thread.
+        const result = await suppressOnDiscord({
+          direction: target.direction,
+          channelId: target.channelId,
+          discordMessageId: target.discordMessageId,
+          parentId: suppressScope.post ? suppressScope.channel.channelId : null,
+        })
         if (!result.ok) {
           return sendJson(response, result.status, { error: result.error, ...(result.status === 403 ? { code: DiscordError.MISSING_PERMISSIONS } : {}) })
         }
@@ -2386,8 +2510,8 @@ export function discordBridgeApi(): Plugin {
         // VIEW on the channel; without it the message is Unknown (staff can't
         // walk sequential ids into channels hidden from them).
         const isOwnWebMessage = message.direction === 'web' && authoredBy(message.authorKey, identity.user)
-        const deleteChannel = await bridge.channelFor(message.channelId)
-        const deleteGate = await writeDenial(identity.user, identity.ip, deleteChannel, isOwnWebMessage ? 'own-message' : 'manage-messages')
+        const deleteScope = await bridge.scopeFor(message.channelId)
+        const deleteGate = await writeDenial(identity.user, identity.ip, deleteScope, isOwnWebMessage ? 'own-message' : 'manage-messages')
         if (!deleteGate.ok) {
           if (deleteGate.status === 404 || deleteGate.body.code === DiscordError.MISSING_ACCESS) {
             return sendJson(response, 404, { error: 'Unknown Message', code: DiscordError.UNKNOWN_MESSAGE })
@@ -2417,6 +2541,15 @@ export function discordBridgeApi(): Plugin {
           channelId: deleted.channelId,
           discordMessageId: deleted.discordMessageId,
         })
+        // Deleting a pending post's starter withdraws the post (it never
+        // reaches Discord). A delivered post outlives its starter, like Discord.
+        const deletedPost = deleteScope?.post
+        if (deletedPost?.pending && deletedPost.starterMessageId === deleted.id) {
+          const dropped = await bridge.dropPendingPost(deletedPost.pk, null).catch(() => null)
+          if (dropped) await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.post.deleted', { channelId: dropped.forumId, postId: dropped.id })
+        } else if (deletedPost && !deletedPost.pending) {
+          await touchPostActivity(deletedPost.id, deletedPost.lastActivityAt)
+        }
         return sendJson(response, 200, {
           ok: true,
           messageId: deleted.id,
@@ -2448,11 +2581,14 @@ export function discordBridgeApi(): Plugin {
         const body = await readBody(req)
         const action = typeof body.action === 'string' ? body.action : ''
         const channelId = typeof body.channelId === 'string' ? body.channelId : ''
-        const channel = channelId ? await bridge.channelFor(channelId) : null
-        if (!channel || !channel.enabled) return sendJson(response, 404, { error: 'Unknown channel.' })
+        // From inside a post, moderation (timeouts, overwrites, lockdown) acts
+        // on its forum: threads inherit all of it.
+        const modScope = channelId ? await bridge.scopeFor(channelId) : null
+        const channel = modScope?.channel ?? null
+        if (!modScope || !channel || !channel.enabled) return sendJson(response, 404, { error: 'Unknown channel.' })
         // Moderators act only from channels they can VIEW (no locking/timing
         // out in staff channels hidden from them), and not while muted/banned.
-        const actorGate = await writeDenial(identity.user, identity.ip, channel, 'moderate')
+        const actorGate = await writeDenial(identity.user, identity.ip, modScope, 'moderate')
         if (!actorGate.ok) {
           if (actorGate.body.code === DiscordError.MISSING_ACCESS) return sendJson(response, 404, { error: 'Unknown channel.' })
           return sendJson(response, actorGate.status, actorGate.body)
@@ -2550,15 +2686,16 @@ export function discordBridgeApi(): Plugin {
         if (!typingLimit.ok) return sendRateLimited(response, typingLimit.retryAfterSec, typingLimit.error)
         const body = await readBody(req)
         const channelId = typeof body.channelId === 'string' ? body.channelId : ''
-        const channel = channelId ? await bridge.channelFor(channelId) : null
+        const typingScope = channelId ? await bridge.scopeFor(channelId) : null
+        if (pendingPost(typingScope)) return sendJson(response, 409, { ...PENDING_POST })
         // Typing is only broadcast for webhooks that could actually send here
         // (the shared write gate): a banned, muted (timed-out), locked-out, or
-        // SEND-denied webhook can't type.
-        const typingGate = await writeDenial(identity.user, identity.ip, channel, 'typing')
+        // SEND-denied webhook can't type. In a post: whoever may reply.
+        const typingGate = await writeDenial(identity.user, identity.ip, typingScope, 'typing')
         if (!typingGate.ok) return sendJson(response, typingGate.status, typingGate.body)
-        if (!channel) return sendJson(response, 404, { error: 'Unknown channel.' })
+        if (!typingScope) return sendJson(response, 404, { error: 'Unknown channel.' })
         await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.typing', {
-          channelId: channel.channelId,
+          channelId: typingScope.id,
           authorKey: callerKey(identity.user),
           authorName: effectiveChatName(identity.user.username, identity.user.chat_display_name),
         })
@@ -2581,14 +2718,16 @@ export function discordBridgeApi(): Plugin {
         if (!pinsLimit.ok) {
           return sendRateLimited(response, pinsLimit.retryAfterSec, pinsLimit.error)
         }
+        // A post's pins live on its thread; a forum and a pending post have none.
+        if (scopeKind(pinsGate.scope) === 'forum' || pendingPost(pinsGate.scope)) return sendJson(response, 200, { pins: [] })
         const token = (await loadConfig()).discord?.botToken
-        const pinned = token ? await fetchDiscordPins(token, channelId) : null
+        const pinned = token ? await fetchDiscordPins(token, pinsGate.scope.id) : null
         if (!pinned) return sendJson(response, 502, { error: 'Could not load pinned messages.' })
         const pins: Array<{ pinnedAt: string; message: bridge.BridgeMessage }> = []
         for (const entry of pinned) {
           const row = await bridge.byDiscordMessageId(entry.message.id).catch(() => null)
           if (row?.deletedAt) continue
-          pins.push({ pinnedAt: entry.pinnedAt, message: row || pinnedToBridgeMessage(entry.message, channelId) })
+          pins.push({ pinnedAt: entry.pinnedAt, message: row || pinnedToBridgeMessage(entry.message, pinsGate.scope.id) })
         }
         // Refresh expiring signed CDN URLs (persisted on the bridged rows).
         const refreshedPins = await refreshMessageMedia(pins.map((p) => p.message), { persist: true })
@@ -2616,8 +2755,8 @@ export function discordBridgeApi(): Plugin {
         // The shared write gate ('manage-messages'): bridged channel, ban,
         // VIEW (staff can't pin in channels hidden from them - Unknown
         // Message), timeout (a muted moderator can't pin), MANAGE/BAN bit.
-        const pinChannel = await bridge.channelFor(message.channelId)
-        const pinGate = await writeDenial(identity.user, identity.ip, pinChannel, 'manage-messages')
+        const pinScope = await bridge.scopeFor(message.channelId)
+        const pinGate = await writeDenial(identity.user, identity.ip, pinScope, 'manage-messages')
         if (!pinGate.ok) {
           if (pinGate.status === 404 || pinGate.body.code === DiscordError.MISSING_ACCESS) {
             return sendJson(response, 404, { error: 'Unknown Message', code: DiscordError.UNKNOWN_MESSAGE })
@@ -2672,6 +2811,210 @@ export function discordBridgeApi(): Plugin {
           total: holders.length,
           members: holders.slice(0, 100),
         })
+      }
+
+      // === Forum channels (docs/forum/contract.md) ===
+      //
+      // GET posts: one page of a forum's posts (pinned first on the first
+      // page), VIEW-gated like /history and sealed like /channels.
+      if (path === 'posts') {
+        if (req.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed' })
+        const sp = url.searchParams
+        const channelId = sp.get('channel') || ''
+        if (!channelId) return sendJson(response, 400, { error: 'Missing channel.' })
+        const postsGate = await viewGate(identity.user, channelId)
+        if (!postsGate.ok) return sendJson(response, postsGate.status, postsGate.body)
+        const forum = postsGate.bridged.forum
+        if (postsGate.scope.post || !forum) return sendJson(response, 400, { error: 'Not a forum channel.', code: DiscordError.UNKNOWN_CHANNEL })
+        const postsLimit = rateLimit(`bridge:posts:${identity.ownerKey}`, { limit: 120, windowMs: 60_000, error: 'Too many requests. Slow down.' })
+        if (!postsLimit.ok) return sendRateLimited(response, postsLimit.retryAfterSec, postsLimit.error)
+        const sortRaw = sp.get('sort')
+        // No sort asked: the forum's own default (null = Recently Active).
+        const sort: bridge.PostListSort = sortRaw === 'created' || sortRaw === 'activity'
+          ? sortRaw
+          : forum.defaultSortOrder === 1 ? 'created' : 'activity'
+        const tags = [...new Set((sp.get('tags') || '').split(','))].filter((id) => SNOWFLAKE.test(id)).slice(0, 20)
+        const beforeRaw = sp.get('before')
+        const cursor = beforeRaw ? bridge.decodePostCursor(beforeRaw, sort) : null
+        if (beforeRaw && !cursor) return sendJson(response, 400, { error: 'Invalid cursor.' })
+        const page = await bridge.listPosts({
+          forumId: postsGate.bridged.channelId,
+          sort,
+          tags,
+          match: sp.get('match') === 'all' ? 'all' : 'some',
+          q: (sp.get('q') || '').slice(0, 100),
+          cursor,
+          limit: Math.min(Math.max(Number(sp.get('limit')) || 25, 1), 50),
+        })
+        // Cards carry owner avatars: a partner page needs them absolute even
+        // inside a sealed body (rewriteForForeignPage only sees plain JSON).
+        const out = request.headers[FOREIGN_PAGE_HEADER] === 'holt'
+          ? JSON.parse(absolutizeSiteAvatars(JSON.stringify(page), foreignPageSiteOrigin)) as typeof page
+          : page
+        return sendSealedJson(req, response, out)
+      }
+
+      // POST post: create a forum post (title, body, tags). Stored at once as
+      // a pending `post:<n>` with its starter message; the bot delivers it
+      // through the forum webhook (thread_name + applied_tags) and re-keys it
+      // to the thread id (bridge.post.delivered). Idempotent on clientId.
+      if (path === 'post') {
+        if (req.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed' })
+        if (identity.isGuest || !identity.user) return sendJson(response, 401, { error: 'Sign in to chat.' })
+        // Separate from /send: Discord's forum slowmode limits post creation.
+        const postLimit = rateLimit(`bridge:post:${identity.ownerKey}`, { limit: 4, windowMs: 60_000, error: 'You are creating posts too fast.' })
+        if (!postLimit.ok) return sendRateLimited(response, postLimit.retryAfterSec, postLimit.error)
+        const body = await readBody(req)
+        const forumId = typeof body.channelId === 'string' ? body.channelId : ''
+        const name = typeof body.name === 'string' ? body.name.replace(/\s+/g, ' ').trim() : ''
+        if (!name || name.length > 100) {
+          return sendJson(response, 400, { error: 'A post title must be 1-100 characters.', code: ForumErrorCode.INVALID_FORM_BODY })
+        }
+        const rawBody = typeof body.content === 'string' ? body.content : ''
+        // Webhook messages cap at 2000 characters; refuse rather than truncate.
+        if (rawBody.trim().length > 2000) {
+          return sendJson(response, 400, { error: 'A post message must be 2000 characters or fewer.', code: ForumErrorCode.INVALID_FORM_BODY })
+        }
+        const appliedTags = Array.isArray(body.appliedTags) ? body.appliedTags.filter((t): t is string => typeof t === 'string') : []
+        if (appliedTags.length > 5 || appliedTags.some((t) => !SNOWFLAKE.test(t))) {
+          return sendJson(response, 400, { error: 'A post can have at most 5 tags.', code: ForumErrorCode.INVALID_FORM_BODY })
+        }
+        const forumScope = forumId ? await bridge.scopeFor(forumId) : null
+        // The shared write gate, 'post-create': everything /send checks on the
+        // forum (SEND_MESSAGES there), plus REQUIRE_TAG / known / moderated tags.
+        const postGate = await writeDenial(identity.user, identity.ip, forumScope, 'post-create', { tags: appliedTags })
+        if (!postGate.ok) return sendJson(response, postGate.status, postGate.body)
+        if (!forumScope) return sendJson(response, 404, { error: 'Unknown channel.', code: DiscordError.UNKNOWN_CHANNEL })
+        const forum = forumScope.channel
+        const postPerms = postGate.perms
+        const { content, mentions: parsedMentions } = await parseMentions(sanitizeContent(rawBody), postPerms, forum.guildId)
+        if (!content) return sendJson(response, 400, { error: 'A post needs a message.', code: ForumErrorCode.INVALID_FORM_BODY })
+        const limits = await mentionLimits()
+        const pingClass = pingClassOf(postPerms)
+        const pingKey = webhookKey(postGate.subject) || identity.ownerKey
+        const spam = mentionSpamCheck(content, pingClass, limits)
+        if (spam.blocked) {
+          mentionLimiter.noteBlocked(pingKey)
+          logMentionLimit(pingKey, 'automod-block', `Mention spam (post): ${spam.count} unique mentions (limit ${spam.limit})`, {
+            channelId: forum.channelId, count: spam.count, limit: spam.limit, content: content.slice(0, 300),
+          })
+          return sendJson(response, 400, automodBlockedBody(false, spam.count, spam.limit))
+        }
+        const limited = mentionLimiter.apply(pingKey, parsedMentions, { cls: pingClass, limits })
+        const user = identity.user
+        const clientId = typeof body.clientId === 'string' && body.clientId.length <= 64 ? body.clientId : null
+        const { post, message, existed } = await bridge.createWebPost({
+          forumId: forum.channelId,
+          guildId: forum.guildId,
+          name,
+          appliedTags,
+          ownerKey: callerKey(user),
+          ownerName: effectiveChatName(user.username, user.chat_display_name),
+          ownerAvatar: await callerAvatar(user),
+          ownerColor: postPerms.color,
+          authorRole: postPerms.tier === 'member' || postPerms.tier === 'guest' ? null : postPerms.tier,
+          content,
+          mentions: limited.mentions,
+          clientId,
+        })
+        if (limited.neutralized.length) {
+          logMentionLimit(pingKey, 'mention-limit', neutralizedReason(limited.neutralized), {
+            channelId: forum.channelId, messageId: message.id, neutralized: limited.neutralized.slice(0, 25),
+          })
+        }
+        const view = await bridge.forumPostView(post)
+        if (!existed) {
+          await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.post.created', { channelId: forum.channelId, post: view })
+          await query(`SELECT pg_notify($1, $2)`, [OUTBOX_NOTIFY_CHANNEL, JSON.stringify({ id: message.id })]).catch(() => {})
+          const links = messageLinks(content)
+          if (links.length) void unfurlMessageEmbeds(message.id, links)
+        }
+        return sendJson(response, existed ? 200 : 201, { post: view, message })
+      }
+
+      // POST post-moderate: lock / unlock, pin / unpin, archive / unarchive,
+      // tags, rename, delete. Staff (canManagePosts) may do all of it; the
+      // post's owner may rename, retag, archive / unarchive and delete their
+      // own post (not while it is locked, except delete). Performed on Discord
+      // with the bot token (Modify Thread / Delete Channel); the result is
+      // stored and broadcast at once (the gateway echo then changes nothing).
+      if (path === 'post-moderate') {
+        if (req.method !== 'POST') return sendJson(response, 405, { error: 'Method not allowed' })
+        if (identity.isGuest || !identity.user) return sendJson(response, 401, { error: 'Sign in to chat.' })
+        const pmLimit = rateLimit(`bridge:post-moderate:${identity.ownerKey}`, { limit: 10, windowMs: 10_000, error: 'Slow down.' })
+        if (!pmLimit.ok) return sendRateLimited(response, pmLimit.retryAfterSec, pmLimit.error)
+        const body = await readBody(req)
+        const action = typeof body.action === 'string' ? body.action : ''
+        const postId = typeof body.postId === 'string' ? body.postId : ''
+        const ACTIONS = new Set(['lock', 'unlock', 'pin', 'unpin', 'archive', 'unarchive', 'tags', 'rename', 'delete'])
+        if (!ACTIONS.has(action)) return sendJson(response, 400, { error: 'Unknown post action.' })
+        const pmScope = postId ? await bridge.scopeFor(postId) : null
+        const post = pmScope?.post ?? null
+        if (!pmScope || !post) return sendJson(response, 404, { error: 'Unknown post.', code: DiscordError.UNKNOWN_CHANNEL })
+        if (post.pending || !post.threadId) return sendJson(response, 409, { ...PENDING_POST })
+        // Not banned, not timed out, can VIEW the forum.
+        const pmGate = await writeDenial(identity.user, identity.ip, pmScope, 'moderate')
+        if (!pmGate.ok) {
+          if (pmGate.body.code === DiscordError.MISSING_ACCESS) return sendJson(response, 404, { error: 'Unknown post.', code: DiscordError.UNKNOWN_CHANNEL })
+          return sendJson(response, pmGate.status, pmGate.body)
+        }
+        const staff = canManagePosts(pmGate.perms.permissions)
+        const linked = identity.user.discord_id || null
+        const owner = authoredBy(post.ownerKey, identity.user) || (linked !== null && post.ownerKey === `discord:${linked}`)
+        const ownerActions = new Set(['rename', 'tags', 'archive', 'unarchive', 'delete'])
+        if (!staff && !(owner && ownerActions.has(action))) {
+          return sendJson(response, 403, { error: 'Missing Permissions', code: DiscordError.MISSING_PERMISSIONS })
+        }
+        // Discord: a locked post's title/tags and its unarchiving are staff-only.
+        if (!staff && post.locked && action !== 'delete' && action !== 'archive') {
+          return sendJson(response, 403, { error: 'This post is locked.', code: ForumErrorCode.THREAD_LOCKED, postLocked: true })
+        }
+        const forum = pmScope.channel
+        const actorName = identity.user.discord_name || identity.user.username
+        const reason = `Post ${action} from the web chat by ${actorName}`.slice(0, 200)
+        const threadId = post.threadId
+        if (action === 'delete') {
+          const res = await discordFetch(`/channels/${threadId}`, { method: 'DELETE' }, reason).catch(() => null)
+          if (!res) return sendJson(response, 502, { error: 'Could not reach Discord.' })
+          if (!res.ok && res.status !== 404) return discordFailure(response, res)
+          await res.body?.cancel().catch(() => {})
+          const gone = await bridge.deletePostByThread(threadId)
+          if (gone) await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.post.deleted', { channelId: forum.channelId, postId: threadId })
+          await bridge.logModeration({ actor: actorName, action: 'post-delete', subject: `post:${threadId}`, meta: { channelId: forum.channelId }, guildId: forum.guildId }).catch(() => {})
+          return sendJson(response, 200, { deleted: true })
+        }
+        let patch: Record<string, unknown>
+        if (action === 'lock' || action === 'unlock') patch = { locked: action === 'lock' }
+        else if (action === 'archive' || action === 'unarchive') patch = { archived: action === 'archive' }
+        else if (action === 'pin' || action === 'unpin') {
+          patch = { flags: action === 'pin' ? post.flags | bridge.CHANNEL_FLAG_PINNED : post.flags & ~bridge.CHANNEL_FLAG_PINNED }
+          // A pinned post is unarchived (archiving unpins it on Discord).
+          if (action === 'pin' && post.archived) patch.archived = false
+        } else if (action === 'rename') {
+          const newName = typeof body.name === 'string' ? body.name.replace(/\s+/g, ' ').trim() : ''
+          if (!newName || newName.length > 100) return sendJson(response, 400, { error: 'A post title must be 1-100 characters.', code: ForumErrorCode.INVALID_FORM_BODY })
+          patch = { name: newName }
+        } else {
+          const next = Array.isArray(body.appliedTags) ? body.appliedTags.filter((t): t is string => typeof t === 'string' && SNOWFLAKE.test(t)) : null
+          if (!next) return sendJson(response, 400, { error: 'Missing tags.', code: ForumErrorCode.INVALID_FORM_BODY })
+          const denial = forum.forum ? validateTagChange(post.appliedTags, next, forum.forum, staff) : null
+          if (denial) return sendJson(response, denial.status, denial.body)
+          patch = { applied_tags: next }
+        }
+        // Owner edits of an archived post: Discord unarchives first.
+        if (!staff && post.archived && (action === 'rename' || action === 'tags')) patch.archived = false
+        const res = await discordFetch(`/channels/${threadId}`, { method: 'PATCH', body: JSON.stringify(patch) }, reason).catch(() => null)
+        if (!res) return sendJson(response, 502, { error: 'Could not reach Discord.' })
+        if (!res.ok) return discordFailure(response, res)
+        const fields = bridge.postFieldsFromRawThread(await res.json().catch(() => null), forum.guildId)
+        let updated = post
+        if (fields && fields.threadId === threadId) {
+          const result = await bridge.upsertDiscordPost(fields)
+          updated = result.post
+          if (result.changed) await bridge.emitPostEvent('bridge.post.updated', updated).catch(() => {})
+        }
+        await bridge.logModeration({ actor: actorName, action: `post-${action}`, subject: `post:${threadId}`, meta: { channelId: forum.channelId }, guildId: forum.guildId }).catch(() => {})
+        return sendJson(response, 200, { post: await bridge.forumPostView(updated) })
       }
 
       return sendJson(response, 404, { error: 'Not found' })

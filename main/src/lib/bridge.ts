@@ -26,8 +26,79 @@ export interface BridgeChannel {
   // current payloads, optional so older ones typecheck).
   guildId?: string
   // Id of the newest non-deleted bridge message in the channel (null = none):
-  // seeds the unread badge for channels this client hasn't opened.
+  // seeds the unread badge for channels this client hasn't opened. For a
+  // forum it is the newest message in any of its posts.
   lastMessageId?: number | null
+  // Forum (type 15) / media (type 16) channels only: the forum settings
+  // (holt docs/forum/contract.md). A forum takes no messages of its own.
+  forum?: BridgeForum
+}
+
+// A forum's available tag (Discord's forum tag object).
+export interface ForumTag {
+  id: string
+  name: string
+  moderated: boolean
+  emoji: { id: string | null; name: string | null } | null
+}
+
+export interface BridgeForum {
+  availableTags: ForumTag[]
+  defaultReactionEmoji: { id: string | null; name: string | null } | null
+  /** 0 latest activity, 1 creation date, null = not set (activity). */
+  defaultSortOrder: 0 | 1 | null
+  /** 0 not set (list), 1 list, 2 gallery. */
+  defaultLayout: 0 | 1 | 2
+  /** Discord's REQUIRE_TAG flag (16). */
+  requireTag: boolean
+  /** The forum topic (markdown, up to 4096 chars). */
+  guidelines: string
+  /** Type 16 media channel. */
+  media: boolean
+}
+
+/** Discord channel types the chatbox renders as a forum view. */
+export function isForumType(type: number | undefined): boolean {
+  return type === 15 || type === 16
+}
+
+// A post (Discord thread) in a forum. `id` is the thread id, or 'post:<n>'
+// while a web-created post hasn't reached Discord (bridge.post.delivered
+// re-keys it).
+export interface ForumPost {
+  id: string
+  forumId: string
+  guildId: string
+  name: string
+  ownerKey: string
+  ownerName: string
+  ownerAvatar: string | null
+  ownerColor: string | null
+  /** Tag ids, in Discord's order. */
+  appliedTags: string[]
+  pinned: boolean
+  archived: boolean
+  locked: boolean
+  /** Web post not yet on Discord. */
+  pending: boolean
+  /** Replies (excludes the starter). */
+  messageCount: number
+  /** Newest bridge message id in the post (unread / "(N New)"). */
+  lastMessageId: number | null
+  lastActivityAt: string
+  createdAt: string
+  starter: {
+    messageId: number | null
+    /** First 300 chars, raw markdown. */
+    content: string
+    /** First image attachment or embed thumbnail URL. */
+    image: string | null
+    reactions: Array<{ emoji: string; count: number }>
+  }
+}
+
+export function isPendingPostId(id: string | null | undefined): boolean {
+  return typeof id === 'string' && id.startsWith('post:')
 }
 
 // A guild category (Discord channel type 4) with at least one visible channel.
@@ -81,6 +152,8 @@ export interface BridgeMessage {
   interaction?: BridgeInteraction | null
   components?: BridgeComponent[]
   flags?: number
+  // Forum posts: the post's first message (discordMessageId = thread id).
+  starter?: boolean
   // Client-only (never sent by the server): Discord's SEND_FAILED message
   // state for an own optimistic row whose /send failed. Rendered red with
   // Retry / Delete; kept for the session only.
@@ -228,6 +301,61 @@ export async function bridgeChannels(guildId: string): Promise<BridgeChannelsRes
   const data = await sealedRequest<{ configured?: boolean; categories?: BridgeCategory[]; channels?: BridgeChannel[] }>(`/channels?guild=${encodeURIComponent(guildId)}`, 'Failed to load channels')
   const channels = Array.isArray(data.channels) ? data.channels.map((c) => (c.guildId ? c : { ...c, guildId })) : []
   return { configured: data.configured !== false, categories: Array.isArray(data.categories) ? data.categories : [], channels }
+}
+
+export type ForumSort = 'activity' | 'created'
+export type ForumTagMatch = 'some' | 'all'
+
+export interface ForumPostsQuery {
+  sort?: ForumSort
+  tags?: string[]
+  match?: ForumTagMatch
+  q?: string
+  before?: string | null
+  limit?: number
+}
+
+export interface ForumPostsPage {
+  posts: ForumPost[]
+  nextCursor: string | null
+  total: number
+}
+
+/** One page of a forum's posts (VIEW-gated like history; sealed like
+ *  `channels`, so read through cryptoFetch). Pinned posts lead the first page. */
+export async function fetchForumPosts(forumId: string, query: ForumPostsQuery = {}): Promise<ForumPostsPage> {
+  const params = new URLSearchParams({ channel: forumId })
+  if (query.sort) params.set('sort', query.sort)
+  if (query.tags?.length) params.set('tags', query.tags.join(','))
+  if (query.tags?.length && query.match) params.set('match', query.match)
+  if (query.q?.trim()) params.set('q', query.q.trim())
+  if (query.before) params.set('before', query.before)
+  if (query.limit) params.set('limit', String(query.limit))
+  const data = await sealedRequest<{ posts?: ForumPost[]; nextCursor?: string | null; total?: number }>(`/posts?${params}`, 'Failed to load posts')
+  const posts = Array.isArray(data.posts) ? data.posts : []
+  return { posts, nextCursor: typeof data.nextCursor === 'string' ? data.nextCursor : null, total: typeof data.total === 'number' ? data.total : posts.length }
+}
+
+/** Create a post (Discord's New Post form). Errors carry Discord's codes:
+ *  40067 tag required, 10087 unknown tag, 50013 missing permissions, 50035
+ *  invalid name. Idempotent on clientId. */
+export async function createForumPost(forumId: string, name: string, content: string, appliedTags: string[], clientId: string): Promise<{ post: ForumPost; message: BridgeMessage }> {
+  return request<{ post: ForumPost; message: BridgeMessage }>('/post', {
+    method: 'POST',
+    body: JSON.stringify({ channelId: forumId, name, content, appliedTags, clientId }),
+  })
+}
+
+export type PostModerateAction = 'lock' | 'unlock' | 'pin' | 'unpin' | 'archive' | 'unarchive' | 'tags' | 'rename' | 'delete'
+
+/** Staff (canManagePosts) post actions; a post's owner may also rename, edit
+ *  tags, archive/unarchive and delete their own post. The live result comes
+ *  back as bridge.post.updated / bridge.post.deleted. */
+export async function moderatePost(postId: string, action: PostModerateAction, extra: { appliedTags?: string[]; name?: string } = {}): Promise<{ post?: ForumPost; deleted?: boolean }> {
+  return request<{ post?: ForumPost; deleted?: boolean }>('/post-moderate', {
+    method: 'POST',
+    body: JSON.stringify({ postId, action, ...extra }),
+  })
 }
 
 // One history page. Unbridged channels are read live from Discord (`live`);
@@ -476,6 +604,15 @@ export interface BridgePerms {
   /** Active chatbox ban reason (site account, linked Discord, or IP). */
   banned?: string | null
   timeout: { timeoutUntil: string; reason: string; issuedByName: string } | null
+  // Forum / post fields (contract.md). Absent on older servers and on
+  // ordinary channels. `canSend` on a post = canReply; on a forum = false.
+  /** Forum: SEND_MESSAGES on the forum (+ everything send needs). */
+  canCreatePost?: boolean
+  /** Post: SEND_IN_POSTS and not locked (staff bypass). */
+  canReply?: boolean
+  /** Staff: lock/unlock, pin/unpin, archive, edit tags, rename, delete any post. */
+  canManagePosts?: boolean
+  post?: { id: string; forumId: string; locked: boolean; archived: boolean; pinned: boolean; ownerKey: string }
 }
 
 export interface BridgeEmbedSuppressPolicy {

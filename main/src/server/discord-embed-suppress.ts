@@ -68,30 +68,35 @@ export async function botCanManageMessages(channelId: string, guildId?: string):
 
 export type SuppressResult = { ok: true } | { ok: false; status: number; error: string }
 
-// Set SUPPRESS_EMBEDS on the Discord copy of a bridged message.
+// Set SUPPRESS_EMBEDS on the Discord copy of a bridged message. A message
+// in a forum post has `channelId` = the thread and `parentId` = the forum:
+// the forum's webhook edits it with ?thread_id=, and the bot's permission is
+// the forum's (threads have no overwrites).
 export async function suppressOnDiscord(target: {
   direction: string
   channelId: string
   discordMessageId: string
+  parentId?: string | null
 }): Promise<SuppressResult> {
   const body = JSON.stringify({ flags: MESSAGE_FLAG_SUPPRESS_EMBEDS })
+  const hookChannelId = target.parentId || target.channelId
   if (target.direction === 'web') {
     const { rows } = await query<{ webhook_id: string | null; webhook_token: string | null }>(
       `SELECT webhook_id, webhook_token FROM discord_bridge_channel WHERE channel_id = $1`,
-      [target.channelId],
+      [hookChannelId],
     )
     const hook = rows[0]
     if (!hook?.webhook_id || !hook.webhook_token) return { ok: false, status: 409, error: 'This channel has no webhook yet.' }
     // Webhook-token auth (no bot token): PATCH the webhook's own message.
     const response = await fetch(
-      `${DISCORD_API}/webhooks/${encodeURIComponent(hook.webhook_id)}/${encodeURIComponent(hook.webhook_token)}/messages/${encodeURIComponent(target.discordMessageId)}`,
+      `${DISCORD_API}/webhooks/${encodeURIComponent(hook.webhook_id)}/${encodeURIComponent(hook.webhook_token)}/messages/${encodeURIComponent(target.discordMessageId)}${target.parentId ? `?thread_id=${encodeURIComponent(target.channelId)}` : ''}`,
       { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body },
     ).catch(() => null)
     if (!response) return { ok: false, status: 502, error: 'Could not reach Discord.' }
     await response.body?.cancel().catch(() => {})
     return response.ok ? { ok: true } : { ok: false, status: 502, error: `Discord refused the edit (HTTP ${response.status}).` }
   }
-  if (!(await botCanManageMessages(target.channelId))) {
+  if (!(await botCanManageMessages(hookChannelId))) {
     return { ok: false, status: 403, error: 'Missing Permissions' }
   }
   const response = await discordFetch(

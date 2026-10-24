@@ -290,6 +290,13 @@ export interface AbulxtConfig {
         targetWindowSeconds?: number
         perTargetPerWindow?: number
       }
+      // Bridge Discord media channels (type 16, beta API) like forums. Off
+      // unless true. Forums (15) are always bridged when configured.
+      mediaChannels?: boolean
+      // How far back a forum's archived posts are synced (each reconcile
+      // pass): the newest `posts` posts or the last `days` days, whichever is
+      // fewer. Defaults { posts: 200, days: 90 }.
+      forumBackfill?: { posts?: number; days?: number }
     }
   }
   // /api/* response obfuscation (api-crypto.ts). Seals eligible JSON responses

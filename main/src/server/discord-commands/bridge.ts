@@ -67,7 +67,8 @@ async function resolveTargetOption(raw: string): Promise<WebhookIdentity | null>
 // is bridged, else the guild the command was run in. (/bridge is registered
 // in every bridged guild, so a moderator's perms resolve in that guild.)
 async function commandGuildId(interaction: ChatInputCommandInteraction, channelId: string): Promise<string> {
-  const channel = await bridge.channelFor(channelId).catch(() => null)
+  // A forum post resolves to its forum's row.
+  const channel = (await bridge.scopeFor(channelId).catch(() => null))?.channel ?? null
   return channel?.guildId || interaction.guildId || ''
 }
 
@@ -95,9 +96,11 @@ const canBan = (bits: bigint) => hasPerm(bits, Perm.BAN_WEBHOOKS) || hasPerm(bit
 async function moderateAs(
   interaction: ChatInputCommandInteraction,
   targetRaw: string,
-  channelId: string,
+  rawChannelId: string,
   request: ModerationRequest,
 ): Promise<string> {
+  // Run inside a forum post: timeouts act on the forum (threads inherit them).
+  const channelId = (await bridge.scopeFor(rawChannelId).catch(() => null))?.channel.channelId || rawChannelId
   const target = await resolveTargetOption(targetRaw)
   if (!target) return 'Unknown webhook. Use a member, user:<siteId>, discord:<id>, a site username, or a bridged message link.'
   const actorIdentity = await resolveWebhookTarget({ kind: 'discord', discordId: interaction.user.id })
@@ -129,7 +132,7 @@ async function moderateAs(
 
 async function bridgedChannelOption(interaction: ChatInputCommandInteraction): Promise<string | null> {
   const channelId = interaction.options.getChannel('channel')?.id || interaction.channelId
-  const channel = channelId ? await bridge.channelFor(channelId).catch(() => null) : null
+  const channel = channelId ? (await bridge.scopeFor(channelId).catch(() => null))?.channel ?? null : null
   return channel && channel.enabled ? channel.channelId : null
 }
 

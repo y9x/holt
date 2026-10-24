@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, MessageFlags, PermissionFlagsBits, REST, Routes } from 'discord.js'
+import { Client, GatewayIntentBits, MessageFlags, Partials, PermissionFlagsBits, REST, Routes } from 'discord.js'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from './config.js'
@@ -60,6 +60,11 @@ async function main() {
       GatewayIntentBits.GuildMessageReactions, // messageReactionAdd/Remove for the bridge
       GatewayIntentBits.MessageContent, // privileged - enable in the dev portal
     ],
+    // Forum posts: the default sweeper evicts archived threads from the cache
+    // after 4 h, and without Partials.Channel a gateway event in an uncached
+    // thread (a delete or reaction in an old post) is dropped. The bridge
+    // resolves such a thread to its forum through discord_bridge_post.
+    partials: [Partials.Channel],
   })
 
   const commandsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'discord-commands')

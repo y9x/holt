@@ -24,6 +24,11 @@ import {
   bridgeRoleMembers,
   bridgeSend,
   bridgeTyping,
+  isForumType,
+  isPendingPostId,
+  moderatePost,
+  type ForumPost,
+  type PostModerateAction,
   type BridgeCategory,
   type BridgeChannel,
   type BridgeChannelSuggestion,
@@ -93,6 +98,7 @@ import './chat-theme.css'
 import { ChannelsAndRolesPage, ChannelsAndRolesSidebarRow, useChannelsAndRoles, type ChannelsAndRolesSection } from './ChannelsAndRoles'
 import { MessageAccessories, ReplyPreviewText, guardLinkClick, setEmbedSuppressPolicy, shouldHideContent, useMediaFallbacks } from './Embeds'
 import { InteractionHeader, MessageComponents, ThinkingContent, hasInteractionHeader, interactionReplyPlaceholder } from './Interactions'
+import { ForumPostTagsRow, ForumView, PostActionModal, PostGlyph, markPostSeen, postMenuEntries } from './Forum'
 
 // Discord's message length cap; the composer shows the remaining count when
 // within this threshold of the limit and blocks sends over it.
@@ -1243,6 +1249,18 @@ export function ChatPage() {
   // Late-bound deep-link resolver (see applyChatLink).
   const applyChatLinkRef = useRef<() => 'none' | 'wait' | 'done'>(() => 'none')
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null)
+  // The open forum post (Discord's "Open in Full View"): activeChannelId is
+  // then the post (thread) id and the message view, history, composer and
+  // every per-channel route run against it (contract.md). Cleared when any
+  // other channel opens.
+  const [openPost, setOpenPostState] = useState<ForumPost | null>(null)
+  const openPostRef = useRef<ForumPost | null>(null)
+  const setOpenPost = useCallback((post: ForumPost | null) => {
+    openPostRef.current = post
+    setOpenPostState(post)
+  }, [])
+  // Post moderation modal (rename / edit tags / delete) for the open post.
+  const [postModal, setPostModal] = useState<{ kind: 'rename' | 'tags' | 'delete'; post: ForumPost } | null>(null)
   const [messages, setMessages] = useState<BridgeMessage[]>([])
   const [typing, setTyping] = useState<TypingUser[]>([])
   const [user, setUser] = useState<AbulxtUser | null>(null)
@@ -1909,8 +1927,18 @@ export function ChatPage() {
   useEffect(() => {
     if (!activeGuildId || !activeChannelId) return
     if ((channelGuild.get(activeChannelId) ?? activeGuildId) !== activeGuildId) return
-    rememberLastChannel(activeGuildId, activeChannelId)
+    const post = openPostRef.current
+    rememberLastChannel(activeGuildId, post && post.id === activeChannelId ? post.forumId : activeChannelId)
   }, [activeGuildId, activeChannelId, channelGuild])
+
+  // Leaving a post for any other channel closes it.
+  useEffect(() => {
+    if (openPostRef.current && openPostRef.current.id !== activeChannelId) setOpenPost(null)
+  }, [activeChannelId, setOpenPost])
+  // Replies seen in the open post (its forum card's "(N New)" count).
+  useEffect(() => {
+    if (openPost) markPostSeen(openPost.id, openPost.messageCount)
+  }, [openPost])
 
   // Sign-in: the caller's roles in every guild (role-mention counting in
   // guilds that aren't open). Signed out, there's nothing to count.
@@ -1968,16 +1996,20 @@ export function ChatPage() {
   // below reloads only when the open channel or its source changes, never on
   // unrelated channel-list updates (lock toggles, onboarding refreshes,
   // Channels & Roles edits) that replace the `channels` array.
-  const activeChannelKind: 'bridged' | 'live' | 'unknown' = (() => {
+  const activeChannelKind: 'bridged' | 'live' | 'forum' | 'unknown' = (() => {
     const row = activeChannelId ? channels.find((c) => c.channelId === activeChannelId) : undefined
     if (!row) return 'unknown'
+    // A forum has no messages of its own: the forum view (Forum.tsx) loads
+    // its posts instead of history.
+    if (isForumType(row.type)) return 'forum'
     return row.bridged === false ? 'live' : 'bridged'
   })()
 
   useEffect(() => {
-    if (!activeChannelId) {
+    if (!activeChannelId || activeChannelKind === 'forum') {
       // A guild switch with nothing to open yet (its sidebar is loading):
-      // never leave the previous guild's channel on screen.
+      // never leave the previous guild's channel on screen. A forum shows
+      // its post list instead of a message history.
       historyChannelRef.current = null
       setMessages([])
       setReplyTo(null)
@@ -2195,6 +2227,13 @@ export function ChatPage() {
         if ((current[message.channelId] || 0) >= message.id) return current
         return { ...current, [message.channelId]: message.id }
       })
+      // A message in a forum post (channelId = post id) also lights the
+      // forum's sidebar row, unless that forum (or one of its posts) is open.
+      const forumId = payload.forumId ? String(payload.forumId) : ''
+      if (forumId) {
+        setLatestByChannel((current) => ((current[forumId] || 0) >= message.id ? current : { ...current, [forumId]: message.id }))
+        if (activeChannelRef.current === forumId || openPostRef.current?.forumId === forumId) markRead(forumId, message.id)
+      }
       if (message.channelId === activeChannelRef.current) {
         markRead(message.channelId, message.id)
       } else {
@@ -2419,6 +2458,33 @@ export function ChatPage() {
       pinsRefreshRef.current?.(String(payload.channelId || ''))
       return
     }
+    // Forum posts (contract.md Realtime). The forum view applies them to its
+    // list; here only the open post follows along: renamed / tagged / locked
+    // / closed (perms re-read: canReply), deleted (back to the forum), or
+    // delivered (pending 'post:<n>' re-keyed to the thread id).
+    if (event.type === 'bridge.post.updated' || event.type === 'bridge.post.delivered') {
+      const post = payload.post as ForumPost | undefined
+      const open = openPostRef.current
+      if (!post || !open) return
+      const pendingId = event.type === 'bridge.post.delivered' ? String(payload.pendingId || '') : ''
+      if (open.id === post.id) {
+        const lockChanged = open.locked !== post.locked || open.archived !== post.archived
+        setOpenPost(post)
+        if (lockChanged && userRef.current) refreshPerms(post.id)
+      } else if (pendingId && open.id === pendingId) {
+        setOpenPost(post)
+        setActiveChannelId(post.id)
+      }
+      return
+    }
+    if (event.type === 'bridge.post.deleted') {
+      const open = openPostRef.current
+      if (open && open.id === String(payload.postId || '')) {
+        setOpenPost(null)
+        setActiveChannelId(open.forumId)
+      }
+      return
+    }
     if (event.type === 'bridge.lockdown') {
       // A mod locked/unlocked a channel. Update the channel list + our perms.
       const channelId = String(payload.channelId || '')
@@ -2458,7 +2524,7 @@ export function ChatPage() {
       markGuildsStale((guildId ? [guildId] : guildsRef.current.map((g) => g.id)).filter((id) => id !== activeGuild))
       return
     }
-  }, [markRead, setHasMoreAfter, mentionSelfFor, suppressFor, refreshPerms, loadGuildChannels, markGuildsStale, reloadGuilds])
+  }, [markRead, setHasMoreAfter, mentionSelfFor, suppressFor, refreshPerms, loadGuildChannels, markGuildsStale, reloadGuilds, setOpenPost])
 
   useEffect(() => subscribeBridge(applyEvent), [applyEvent])
   // Account changes made on another device (profile, avatar, email verification,
@@ -3874,7 +3940,41 @@ export function ChatPage() {
     return () => document.removeEventListener('click', close)
   }, [emojiMenuOpen])
 
-  const activeChannel = useMemo(() => channels.find((c) => c.channelId === activeChannelId) || null, [channels, activeChannelId])
+  // The open post's forum (sidebar row), and the post as a channel row so the
+  // header, composer placeholder and context menus read it like a channel.
+  const postForum = useMemo(() => (openPost ? allChannels.get(openPost.forumId) ?? null : null), [openPost, allChannels])
+  const activeChannel = useMemo<BridgeChannel | null>(() => {
+    if (openPost && openPost.id === activeChannelId) {
+      return { channelId: openPost.id, name: openPost.name, topic: '', position: 0, type: 11, parentId: openPost.forumId, guildId: openPost.guildId, bridged: true }
+    }
+    return channels.find((c) => c.channelId === activeChannelId) || null
+  }, [channels, activeChannelId, openPost])
+  // The forum view replaces the message list when a forum (type 15/16) is open.
+  const activeForum = activeChannel && isForumType(activeChannel.type) ? activeChannel : null
+  const activePost = openPost && openPost.id === activeChannelId ? openPost : null
+  // Viewing a forum reads it (its unread dot tracks messages in any post).
+  useEffect(() => {
+    if (!activeForum) return
+    const latest = latestByChannel[activeForum.channelId] || 0
+    if (latest) markRead(activeForum.channelId, latest)
+  }, [activeForum, latestByChannel, markRead])
+  const openForumPost = useCallback((post: ForumPost) => {
+    setCrSection(null)
+    setOpenPost(post)
+    setActiveChannelId(post.id)
+  }, [setOpenPost])
+  // Locked / closed state of the open post: the perms payload is the live
+  // truth (contract.md perms.post), the post object the fallback.
+  const postState = activePost && perms?.post?.id === activePost.id ? perms.post : activePost
+  const postLocked = Boolean(postState?.locked)
+  const postArchived = Boolean(postState?.archived)
+  const postPending = Boolean(activePost && (activePost.pending || isPendingPostId(activePost.id)))
+  const postSelfKeys = perms?.webhookKeys || (perms?.ownerKey ? [perms.ownerKey] : [])
+  const runPostAction = useCallback((post: ForumPost, action: PostModerateAction) => {
+    moderatePost(post.id, action)
+      .then((res) => { if (res.post && openPostRef.current?.id === res.post.id) setOpenPost(res.post) })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Something went wrong.'))
+  }, [setOpenPost, setError])
   // Read-only = the active channel exists but is NOT bridged to the web chat.
   // Discord lets members browse channels they can't send in; on the bridge a
   // non-bridged channel has no web history and its send routes 404, so the
@@ -3885,7 +3985,7 @@ export function ChatPage() {
   const activeChannelReadOnly = activeChannel !== null && !activeChannelBridged
   // Pins are read live from Discord, so read-only (unbridged) channels have
   // them too.
-  const pinsAvailable = activeChannel !== null
+  const pinsAvailable = activeChannel !== null && !activeForum
   const forwardChannels = channels.filter((c) => c.bridged !== false)
   // Discord never shows your own "is typing…" indicator - filter the caller
   // (perms.ownerKey) out of the typer list, keyed by authorKey.
@@ -4046,7 +4146,7 @@ export function ChatPage() {
   // permission/timeout block applies; signing-in is prompted on Enter instead.
   // A non-bridged (read-only) channel is always disabled - there's nothing to
   // send to (its /send route 404s).
-  const composerDisabled = activeChannelReadOnly
+  const composerDisabled = activeChannelReadOnly || postPending
     || (user !== null && (perms?.emailVerified === false || !activeChannelId || timedOut || cannotSend))
 
   const formatCountdown = (totalSeconds: number): string => {
@@ -4072,7 +4172,9 @@ export function ChatPage() {
         ? 'You must verify your email before you can send messages in this server.'
         : user && cannotSend
           ? 'You do not have permission to send messages in this channel.'
-          : `Message #${activeChannel?.name || 'chat'}`
+          : activePost
+            ? `Message "${activePost.name}"`
+            : `Message #${activeChannel?.name || 'chat'}`
 
   // Guild tooltip: Discord's guild-rail tooltip opens immediately on hover (no
   // show delay - only the bubble's own enter animation), positioned off the rail.
@@ -4425,6 +4527,20 @@ export function ChatPage() {
   const onChannelHeaderContext = useCallback((e: React.MouseEvent) => {
     if (!activeChannel) return
     e.preventDefault()
+    if (activePost) {
+      // A forum post: Discord's thread context menu (post-moderate actions
+      // for staff and the post's owner).
+      const entries = postMenuEntries(activePost, {
+        canManage: Boolean(perms?.canManagePosts),
+        isOwner: postSelfKeys.includes(activePost.ownerKey),
+        developerMode,
+        onAction: (action) => runPostAction(activePost, action),
+        onEdit: (kind) => setPostModal({ kind, post: activePost }),
+        onCopyId: () => copyText(activePost.id),
+      })
+      if (entries.length) openElemMenu(entries, 'Post Actions', e.clientX, e.clientY)
+      return
+    }
     const channelLink = chatLinkFor(activeChannel.channelId)
     // Discord's channel-title menu (995269…, CHANNEL_TITLE_MENU) has no Mark
     // As Read: [Mute Channel ›] [Notification Settings ›] [Copy Link]
@@ -4437,7 +4553,7 @@ export function ChatPage() {
       { key: 'copy-link', label: 'Copy Link', onSelect: () => copyText(channelLink) },
       ...(developerMode ? ['separator' as const, { key: 'copy-id', label: 'Copy Channel ID', icon: <MenuCopyIcon />, onSelect: () => copyText(activeChannel.channelId) }] : []),
     ], 'Channel Actions', e.clientX, e.clientY)
-  }, [activeChannel, openElemMenu, copyText, muteMenuItem, channelNotifMenuItem, developerMode, chatLinkFor])
+  }, [activeChannel, activePost, perms, postSelfKeys, runPostAction, openElemMenu, copyText, muteMenuItem, channelNotifMenuItem, developerMode, chatLinkFor])
 
   // === Webhook moderation (user menus + profile popout) ===
   // Moderation applies to WEBHOOK identities: web authors ('user:<siteId>',
@@ -5553,7 +5669,7 @@ export function ChatPage() {
               // Unread rows also carry d-channelUnread (live's
               // modeUnreadImportant): name brightens to --text-strong and the
               // hash icon to --icon-strong, not just the white pill.
-              return (
+              const row = (
                 <div
                   key={channel.channelId}
                   className={`d-channelInteractive ${selected ? 'd-channelInteractiveSelected' : ''} ${unread ? 'd-channelUnread' : ''} ${muted ? 'd-channelMuted' : ''}`}
@@ -5582,6 +5698,19 @@ export function ChatPage() {
                   </button>
                   {unread && <span className="d-channelUnreadPill" aria-hidden="true" />}
                 </div>
+              )
+              if (!openPost || openPost.forumId !== channel.channelId) return row
+              // The open forum post: Discord's thread row under its parent
+              // (spine + name, selected). The post title is a data value.
+              return (
+                <Fragment key={channel.channelId}>
+                  {row}
+                  <div className={`d-channelInteractive dcfSidebarPost${openPost.id === activeChannelId && !crSection ? ' d-channelInteractiveSelected' : ''}`}>
+                    <button type="button" className="d-channelLink" onClick={() => openForumPost(openPost)} aria-current={openPost.id === activeChannelId ? 'true' : undefined}>
+                      <span className="d-channelName d-channelNameFade channel-name">{openPost.name}</span>
+                    </button>
+                  </div>
+                </Fragment>
               )
             }
             const rowsShown = collapsed
@@ -5742,15 +5871,36 @@ export function ChatPage() {
             {/* Right-click on the title/icon/topic area opens Discord's
                 channel context menu (same actions as the sidebar row). */}
             <div className="d-headerChildren" onContextMenu={onChannelHeaderContext}>
-              <div className="d-headerChannelIcon d-headerIconWrapper">
-                <ChannelTypeIcon kind={channelIconKind(activeChannel?.type, Boolean(activeChannel) && activeChannel?.channelId === activeGuild?.rulesChannelId)} size={24} className="d-headerIcon" />
-              </div>
-              <div className="d-headerTitleWrapper">
-                <h1 className="d-headerTitle ns">{activeChannel?.name || 'chat'}</h1>
-              </div>
+              {activePost ? (
+                <>
+                  {/* An open forum post: forum › post breadcrumb (the forum
+                      name opens the forum view). Names are data values. */}
+                  <div className="d-headerChannelIcon d-headerIconWrapper">
+                    <ChannelTypeIcon kind={channelIconKind(postForum?.type ?? 15)} size={24} className="d-headerIcon" />
+                  </div>
+                  <button type="button" className="dcfCrumbParent" onClick={() => { setCrSection(null); setActiveChannelId(activePost.forumId) }}>
+                    {postForum?.name || activePost.forumId}
+                  </button>
+                  <svg className="dcfCrumbChevron" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path fill="currentColor" d="M5.3 9.3a1 1 0 0 1 1.4 0l5.3 5.29 5.3-5.3a1 1 0 1 1 1.4 1.42l-6 6a1 1 0 0 1-1.4 0l-6-6a1 1 0 0 1 0-1.42Z" /></svg>
+                  <PostGlyph size={20} className="dcfCrumbPostIcon" />
+                  <div className="d-headerTitleWrapper">
+                    <h1 className="d-headerTitle ns">{activePost.name}</h1>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="d-headerChannelIcon d-headerIconWrapper">
+                    <ChannelTypeIcon kind={channelIconKind(activeChannel?.type, Boolean(activeChannel) && activeChannel?.channelId === activeGuild?.rulesChannelId)} size={24} className="d-headerIcon" />
+                  </div>
+                  <div className="d-headerTitleWrapper">
+                    <h1 className="d-headerTitle ns">{activeChannel?.name || 'chat'}</h1>
+                  </div>
+                </>
+              )}
               {/* Header divider + topic render only when the channel has a
-                  non-empty topic - live Discord shows neither otherwise. */}
-              {activeChannel?.topic?.trim() && (
+                  non-empty topic - live Discord shows neither otherwise. A
+                  forum shows its topic as Post Guidelines instead. */}
+              {!activeForum && activeChannel?.topic?.trim() && (
                 <>
                   <div className="d-headerDivider" aria-hidden="true" />
                   <div className="activeInfo-description ns">{activeChannel.topic}</div>
@@ -5765,6 +5915,7 @@ export function ChatPage() {
                 no bridge backend, so they're omitted entirely rather than
                 rendered as dead buttons. */}
             <div className="d-headerToolbar">
+              {!activePost && (
               <div
                 className="d-headerIconWrapper d-headerClickable d-headerIconBell"
                 role="button"
@@ -5785,6 +5936,7 @@ export function ChatPage() {
                   ? <MenuBellOffIcon size={24} className="d-headerIcon" />
                   : <BellIcon />}
               </div>
+              )}
               {pinsAvailable && (
               <div
                 className="d-headerIconWrapper d-headerClickable d-headerIconPin"
@@ -6032,6 +6184,23 @@ export function ChatPage() {
           </HoverTooltip>
         )}
 
+        {activeForum && !crSection ? (
+          <ForumView
+            key={activeForum.channelId}
+            forum={activeForum}
+            perms={perms}
+            signedIn={user !== null}
+            selfKeys={postSelfKeys}
+            lastRead={lastRead}
+            developerMode={developerMode}
+            openPostId={null}
+            onRequireSignIn={() => setShowAuth(true)}
+            onOpenPost={openForumPost}
+            onError={setError}
+            onCopy={copyText}
+            onMarkPostRead={(post) => { if (post.lastMessageId) markRead(post.id, post.lastMessageId) }}
+          />
+        ) : (<>
         {/* group-spacing-* scopes Discord's --custom-group-spacing-start per
             density (cozy 17px / compact 1px) - see .messages.group-spacing-*
             in chat.css. The vendored group-spacing rules only cover
@@ -6098,13 +6267,14 @@ export function ChatPage() {
           {/* Discord shows the channel's welcome header above the first
               message once the window reaches the beginning of history
               (hasMoreBefore false), not only for an empty channel. */}
-          {!loading && activeChannelId && ((!messages.length && !activeChannelReadOnly) || (messages.length > 0 && !hasMore)) && (
+          {!loading && activeChannelId && !activePost && ((!messages.length && !activeChannelReadOnly) || (messages.length > 0 && !hasMore)) && (
             <div className="channel-welcome">
               <div className="welcome-icon"><WelcomeHashIcon /></div>
               <HolyRich as="div" className="welcome-title">Welcome to #{activeChannel?.name || 'chat'}!</HolyRich>
               <HolyRich as="div" className="welcome-sub">This is the start of the #{activeChannel?.name || 'chat'} channel.</HolyRich>
             </div>
           )}
+          {!loading && activePost && !messages.length && <div className="dcfMsgs-scrollerSpacer dcfMsgs-emptyForum" aria-hidden="true" />}
           {/* Placeholder rows at a window edge with more history (Discord's
               message-list placeholders): scrolling near them loads the next
               chunk, so a normal scroll rarely sees them. */}
@@ -6140,7 +6310,7 @@ export function ChatPage() {
             // Discord paints rows that mention you with the yellow mentioned
             // background + left accent bar (see .message.mentioned in chat.css).
             const mentioned = user !== null && messageMentionsUser(message, mentionSelf)
-            return (
+            const rowEl = (
               <div
                 key={row.key}
                 data-message-id={message.id}
@@ -6508,6 +6678,10 @@ export function ChatPage() {
                 )}
               </div>
             )
+            // An open post's starter message carries the post's tags row
+            // (Discord's nonMessageContent under the starter).
+            if (!activePost || !(message.starter || message.discordMessageId === activePost.id)) return rowEl
+            return <Fragment key={row.key}>{rowEl}<ForumPostTagsRow post={activePost} forum={postForum} /></Fragment>
           })}
           {!loading && activeChannelId && messages.length > 0 && hasMoreAfter && (
             <div className="chat-history-edge bottom" aria-hidden="true">
@@ -6600,7 +6774,18 @@ export function ChatPage() {
           // permission + a KLIPY key) - Discord hides what you can't use.
           canGifs={!composerDisabled && canSendEmbeds && Boolean(klipyKey)}
           canStickers={!composerDisabled && canSendEmbeds && Boolean(klipyKey)}
-          locked={channelLocked && !isStaff}
+          locked={activePost ? postLocked && !perms?.canManagePosts : channelLocked && !isStaff}
+          lockedText={activePost ? 'This post is locked.' : undefined}
+          notice={activePost && (postPending || postArchived || (postLocked && perms?.canManagePosts)) ? (
+            <div className="dcfPostNotice" role="note">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" clipRule="evenodd" d="M12 23a11 11 0 1 0 0-22 11 11 0 0 0 0 22Zm1.44-15.94L13.06 14a1.06 1.06 0 0 1-2.12 0l-.38-6.94a1 1 0 0 1 1-1.06h.88a1 1 0 0 1 1 1.06Zm-.19 10.69a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Z" /></svg>
+              <HolyText text={postPending
+                ? 'This post has not reached Discord yet.'
+                : postLocked
+                  ? 'This post is locked. Only moderators can reply.'
+                  : 'This post is closed. Sending a message will reopen it.'} />
+            </div>
+          ) : undefined}
           hasContent={composerLength > 0}
           charCount={composerLength}
           maxLength={CHAT_MAX_LENGTH}
@@ -6626,6 +6811,7 @@ export function ChatPage() {
           typingNames={typingNames}
         />
         )}
+        </>)}
         {/* Discord's search results sidebar (searchResultsWrap, 418px). */}
         <SearchResults
           search={search}
@@ -6782,6 +6968,18 @@ export function ChatPage() {
       {/* Delete confirmation - Discord's "Delete Message" modal: header +
           "Are you sure you want to delete this message?" + the message preview,
           with Cancel / Delete (danger) in the footer. */}
+      {postModal && (
+        <PostActionModal
+          kind={postModal.kind}
+          post={postModal.post}
+          forum={allChannels.get(postModal.post.forumId) ?? null}
+          onClose={() => setPostModal(null)}
+          onDone={(res) => {
+            if (res.deleted && openPostRef.current?.id === postModal.post.id) { setOpenPost(null); setActiveChannelId(postModal.post.forumId) }
+            else if (res.post && openPostRef.current?.id === res.post.id) setOpenPost(res.post)
+          }}
+        />
+      )}
       {deleteTarget && (
         <div
           className="deleteConfirmBackdrop"

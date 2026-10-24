@@ -19,6 +19,106 @@ export interface BridgeChannel {
   // The fail-closed fallback when the guild snapshot is unavailable: only
   // such channels stay readable (FALSE until the bot has synced it).
   everyoneCanView: boolean
+  // Discord channel type (migration 038): 0 text, 5 announcement, 15 forum,
+  // 16 media. A forum/media channel holds posts only, no messages of its own.
+  type: number
+  // Discord channel flags (REQUIRE_TAG 16 on a forum).
+  flags: number
+  // The forum's settings for type 15/16 (null for every other type).
+  forum: ForumMeta | null
+}
+
+// --- Forum channels (migration 038) -------------------------------------------
+// A forum (15) or media (16) channel holds only posts. A post is a Discord
+// thread; its id is the thread id, or `post:<n>` (discord_bridge_post.id n)
+// while a web-created post waits for its webhook delivery. Messages in a post
+// are ordinary rows whose channel_id is the post id. See holt
+// docs/forum/contract.md.
+
+export const FORUM_CHANNEL_TYPES: ReadonlySet<number> = new Set([15, 16])
+export const CHANNEL_FLAG_PINNED = 1 << 1
+export const CHANNEL_FLAG_REQUIRE_TAG = 1 << 4
+
+export function isForumType(type: number | null | undefined): boolean {
+  return typeof type === 'number' && FORUM_CHANNEL_TYPES.has(type)
+}
+
+export interface ForumTag {
+  id: string
+  name: string
+  moderated: boolean
+  emoji: { id: string | null; name: string | null } | null
+}
+
+export interface ForumMeta {
+  availableTags: ForumTag[]
+  defaultReactionEmoji: { id: string | null; name: string | null } | null
+  // 0 latest activity, 1 creation date, null = not set (activity).
+  defaultSortOrder: 0 | 1 | null
+  // 0 not set (list), 1 list, 2 gallery.
+  defaultLayout: 0 | 1 | 2
+  requireTag: boolean
+  // The forum topic: Discord's Post Guidelines (markdown, up to 4096 chars).
+  guidelines: string
+  media: boolean
+}
+
+function emojiOf(id: unknown, name: unknown): { id: string | null; name: string | null } | null {
+  const eid = typeof id === 'string' && id ? id : null
+  const ename = typeof name === 'string' && name ? name : null
+  return eid || ename ? { id: eid, name: ename } : null
+}
+
+// Discord's tag objects ({id, name, moderated, emoji_id, emoji_name}, as
+// stored) or discord.js's ({..., emoji: {id, name}}) → the contract shape.
+// Malformed entries are dropped. Pure.
+export function normalizeForumTags(raw: unknown): ForumTag[] {
+  if (!Array.isArray(raw)) return []
+  const out: ForumTag[] = []
+  for (const t of raw) {
+    if (!t || typeof t !== 'object') continue
+    const o = t as Record<string, unknown>
+    if (typeof o.id !== 'string' || !o.id) continue
+    const nested = o.emoji && typeof o.emoji === 'object' ? (o.emoji as Record<string, unknown>) : null
+    out.push({
+      id: o.id,
+      name: typeof o.name === 'string' ? o.name : '',
+      moderated: o.moderated === true,
+      emoji: nested ? emojiOf(nested.id, nested.name) : emojiOf(o.emoji_id, o.emoji_name),
+    })
+  }
+  return out
+}
+
+// The stored default_reaction_emoji ({emoji_id, emoji_name} or {id, name}). Pure.
+export function normalizeReactionEmoji(raw: unknown): { id: string | null; name: string | null } | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  return 'emoji_id' in o || 'emoji_name' in o ? emojiOf(o.emoji_id, o.emoji_name) : emojiOf(o.id, o.name)
+}
+
+// The forum block of a channel row (null for non-forum types). Pure.
+export function forumMetaOf(row: {
+  type: number
+  topic: string
+  flags: number
+  available_tags?: unknown
+  default_reaction_emoji?: unknown
+  default_sort_order?: number | null
+  default_forum_layout?: number | null
+}): ForumMeta | null {
+  if (!isForumType(row.type)) return null
+  const sort = row.default_sort_order
+  const layout = row.default_forum_layout
+  return {
+    availableTags: normalizeForumTags(row.available_tags),
+    defaultReactionEmoji: normalizeReactionEmoji(row.default_reaction_emoji),
+    defaultSortOrder: sort === 0 || sort === 1 ? sort : null,
+    defaultLayout: layout === 1 || layout === 2 ? layout : 0,
+    requireTag: (row.flags & CHANNEL_FLAG_REQUIRE_TAG) !== 0,
+    guidelines: (row.topic || '').slice(0, 4096),
+    media: row.type === 16,
+  }
 }
 
 export interface BridgeMessage {
@@ -115,6 +215,12 @@ interface ChannelRow {
   locked: boolean
   parent_id?: string | null
   everyone_can_view?: boolean | null
+  type?: number | null
+  flags?: number | null
+  available_tags?: unknown
+  default_reaction_emoji?: unknown
+  default_sort_order?: number | null
+  default_forum_layout?: number | null
 }
 
 interface MessageRow {
@@ -146,7 +252,12 @@ interface MessageRow {
 }
 
 function toChannel(row: ChannelRow): BridgeChannel {
+  const type = typeof row.type === 'number' ? row.type : 0
+  const flags = typeof row.flags === 'number' ? row.flags : 0
   return {
+    type,
+    flags,
+    forum: forumMetaOf({ ...row, type, flags, topic: row.topic }),
     id: Number(row.id),
     channelId: row.channel_id,
     guildId: row.guild_id,
@@ -227,7 +338,8 @@ async function withReactions(messages: BridgeMessage[]): Promise<BridgeMessage[]
   return messages
 }
 
-const CHANNEL_COLS = 'id, channel_id, guild_id, name, topic, position, enabled, locked, parent_id, everyone_can_view'
+const CHANNEL_COLS = `id, channel_id, guild_id, name, topic, position, enabled, locked, parent_id, everyone_can_view,
+  type, flags, available_tags, default_reaction_emoji, default_sort_order, default_forum_layout`
 
 // `guildId` limits the list to one guild's channels.
 export async function listChannels(enabledOnly = true, guildId?: string): Promise<BridgeChannel[]> {
@@ -269,14 +381,23 @@ export async function disableChannel(channelId: string): Promise<boolean> {
 
 // Newest non-deleted message id per channel (one query; unread badges for
 // channels the client hasn't opened). Channels without messages map to null.
+// A forum (no messages of its own) maps to the newest message in any of its
+// live posts.
 export async function lastMessageIds(channelIds: string[]): Promise<Map<string, number | null>> {
   const out = new Map<string, number | null>()
   if (!channelIds.length) return out
   const { rows } = await query<{ channel_id: string; id: string | null }>(
     `SELECT c.channel_id,
-            (SELECT m.id FROM discord_bridge_message m
-              WHERE m.channel_id = c.channel_id AND m.deleted_at IS NULL
-              ORDER BY m.id DESC LIMIT 1) AS id
+            GREATEST(
+              (SELECT m.id FROM discord_bridge_message m
+                WHERE m.channel_id = c.channel_id AND m.deleted_at IS NULL
+                ORDER BY m.id DESC LIMIT 1),
+              (SELECT max(x.id) FROM discord_bridge_post p
+                 CROSS JOIN LATERAL (SELECT m.id FROM discord_bridge_message m
+                   WHERE m.channel_id = COALESCE(p.thread_id, 'post:' || p.id) AND m.deleted_at IS NULL
+                   ORDER BY m.id DESC LIMIT 1) x
+                WHERE p.channel_id = c.channel_id AND p.deleted_at IS NULL)
+            ) AS id
      FROM unnest($1::text[]) AS c(channel_id)`,
     [channelIds],
   )
@@ -306,12 +427,24 @@ export async function upsertChannel(input: {
   everyoneCanView?: boolean
   webhookId?: string | null
   webhookToken?: string | null
+  // Discord channel type (0 / 5 / 15 / 16). undefined keeps the stored one.
+  type?: number
+  // Discord channel flags for a non-forum channel. undefined keeps them.
+  flags?: number
+  // A forum's settings (type 15/16), Discord's raw shapes. undefined keeps
+  // the stored ones.
+  forum?: ForumChannelInput
 }): Promise<void> {
   // ONLY the bot's bridge-set sync calls this: it (re-)enables the row.
   // Message persistence uses updateChannelMetadata, which never enables.
+  const f = input.forum
   await query(
-    `INSERT INTO discord_bridge_channel (channel_id, guild_id, name, topic, position, webhook_id, webhook_token, parent_id, everyone_can_view)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($10::boolean, FALSE))
+    `INSERT INTO discord_bridge_channel (channel_id, guild_id, name, topic, position, webhook_id, webhook_token, parent_id, everyone_can_view,
+       type, available_tags, default_reaction_emoji, default_sort_order, default_forum_layout, flags,
+       default_thread_rate_limit_per_user, rate_limit_per_user)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($10::boolean, FALSE),
+       COALESCE($11::smallint, 0), COALESCE($13::jsonb, '[]'::jsonb), $14::jsonb, $15::smallint, COALESCE($16::smallint, 0), COALESCE($17::int, 0),
+       COALESCE($18::int, 0), COALESCE($19::int, 0))
      ON CONFLICT (channel_id) DO UPDATE SET
        name = EXCLUDED.name,
        topic = EXCLUDED.topic,
@@ -321,6 +454,14 @@ export async function upsertChannel(input: {
        everyone_can_view = COALESCE($10::boolean, discord_bridge_channel.everyone_can_view),
        webhook_id = COALESCE(EXCLUDED.webhook_id, discord_bridge_channel.webhook_id),
        webhook_token = COALESCE(EXCLUDED.webhook_token, discord_bridge_channel.webhook_token),
+       type = COALESCE($11::smallint, discord_bridge_channel.type),
+       available_tags = CASE WHEN $12::boolean THEN COALESCE($13::jsonb, '[]'::jsonb) ELSE discord_bridge_channel.available_tags END,
+       default_reaction_emoji = CASE WHEN $12::boolean THEN $14::jsonb ELSE discord_bridge_channel.default_reaction_emoji END,
+       default_sort_order = CASE WHEN $12::boolean THEN $15::smallint ELSE discord_bridge_channel.default_sort_order END,
+       default_forum_layout = CASE WHEN $12::boolean THEN COALESCE($16::smallint, 0) ELSE discord_bridge_channel.default_forum_layout END,
+       flags = COALESCE($17::int, discord_bridge_channel.flags),
+       default_thread_rate_limit_per_user = COALESCE($18::int, discord_bridge_channel.default_thread_rate_limit_per_user),
+       rate_limit_per_user = COALESCE($19::int, discord_bridge_channel.rate_limit_per_user),
        enabled = TRUE`,
     [
       input.channelId,
@@ -333,8 +474,30 @@ export async function upsertChannel(input: {
       input.parentId ?? null,
       input.parentId !== undefined,
       input.everyoneCanView ?? null,
+      typeof input.type === 'number' ? input.type : null,
+      f !== undefined,
+      f ? JSON.stringify(f.availableTags || []) : null,
+      f && f.defaultReactionEmoji ? JSON.stringify(f.defaultReactionEmoji) : null,
+      f && (f.defaultSortOrder === 0 || f.defaultSortOrder === 1) ? f.defaultSortOrder : null,
+      f ? (f.defaultForumLayout ?? 0) : null,
+      f ? (f.flags ?? 0) : (typeof input.flags === 'number' ? input.flags : null),
+      f ? (f.defaultThreadRateLimitPerUser ?? 0) : null,
+      f ? (f.rateLimitPerUser ?? 0) : null,
     ],
   )
+}
+
+// A forum's settings as the bot reads them from Discord (raw API shapes:
+// tags {id, name, moderated, emoji_id, emoji_name}, default reaction
+// {emoji_id, emoji_name}).
+export interface ForumChannelInput {
+  availableTags: Array<{ id: string; name: string; moderated: boolean; emoji_id: string | null; emoji_name: string | null }>
+  defaultReactionEmoji: { emoji_id: string | null; emoji_name: string | null } | null
+  defaultSortOrder: number | null
+  defaultForumLayout: number
+  flags: number
+  defaultThreadRateLimitPerUser: number
+  rateLimitPerUser: number
 }
 
 // Refresh an EXISTING row's display metadata (message persistence path).
@@ -1441,4 +1604,704 @@ async function searchMessagesTx(client: Queryable, f: SearchFilters): Promise<{ 
     params,
   )
   return { total: Number(countRes.rows[0]?.n || 0), messages: rowsRes.rows.map(toMessage) }
+}
+
+// === Forum posts (migration 038) =============================================
+//
+// One discord_bridge_post row per post (a Discord thread in a bridged forum).
+// Messages in a post are ordinary discord_bridge_message rows keyed by the
+// post id (the thread id), so history, search, reactions and edits work
+// unchanged; every GATE (perms, overwrites, timeouts, bans, guild) resolves
+// the post to its forum first (scopeFor). A web-created post exists before
+// Discord has a thread for it: its id is `post:<pk>` and its starter row has
+// channel_id = 'post:<pk>' until deliverPendingPost re-keys both.
+
+export type PostListSort = 'activity' | 'created'
+
+export interface BridgePost {
+  pk: number
+  // The post id clients use: the thread id, or 'post:<pk>' while pending.
+  id: string
+  threadId: string | null
+  forumId: string
+  guildId: string
+  name: string
+  ownerKey: string
+  ownerName: string
+  ownerAvatar: string | null
+  ownerColor: string | null
+  appliedTags: string[]
+  flags: number
+  pinned: boolean
+  archived: boolean
+  locked: boolean
+  // A web post not yet on Discord.
+  pending: boolean
+  direction: 'discord' | 'web'
+  starterMessageId: number | null
+  lastActivityAt: string
+  createdAt: string
+  deletedAt: string | null
+  deliveryError: number | null
+  // The sort keys as Postgres text (microsecond precision) for cursors.
+  activityKey: string
+  createdKey: string
+}
+
+// The contract's ForumPost (holt docs/forum/contract.md).
+export interface ForumPostView {
+  id: string
+  forumId: string
+  guildId: string
+  name: string
+  ownerKey: string
+  ownerName: string
+  ownerAvatar: string | null
+  ownerColor: string | null
+  appliedTags: string[]
+  pinned: boolean
+  archived: boolean
+  locked: boolean
+  pending: boolean
+  messageCount: number
+  lastMessageId: number | null
+  lastActivityAt: string
+  createdAt: string
+  starter: {
+    messageId: number | null
+    content: string
+    image: string | null
+    reactions: Array<{ emoji: string; count: number }>
+  }
+}
+
+interface PostRow {
+  id: string
+  thread_id: string | null
+  channel_id: string
+  guild_id: string
+  name: string
+  owner_key: string
+  owner_name: string
+  owner_avatar: string | null
+  owner_color: string | null
+  applied_tags: string[] | null
+  flags: number
+  archived: boolean
+  locked: boolean
+  direction: 'discord' | 'web'
+  starter_message_id: string | null
+  last_activity_at: Date | string
+  created_at: Date | string
+  deleted_at: Date | string | null
+  delivery_error: number | null
+  activity_key: string
+  created_key: string
+}
+
+function postCols(alias = ''): string {
+  const a = alias ? `${alias}.` : ''
+  return [
+    'id', 'thread_id', 'channel_id', 'guild_id', 'name', 'owner_key', 'owner_name', 'owner_avatar', 'owner_color',
+    'applied_tags', 'flags', 'archived', 'locked', 'direction', 'starter_message_id', 'last_activity_at', 'created_at',
+    'deleted_at', 'delivery_error',
+  ].map((c) => `${a}${c}`).join(', ') + `, ${a}last_activity_at::text AS activity_key, ${a}created_at::text AS created_key`
+}
+
+function isoOf(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null
+  const d = value instanceof Date ? value : new Date(value)
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null
+}
+
+const PENDING_POST_RE = /^post:(\d{1,15})$/
+
+// 'post:<pk>' for a pending web post. Pure.
+export function pendingPostId(pk: number): string {
+  return `post:${pk}`
+}
+
+// The pk in a pending post id, or null for anything else. Pure.
+export function parsePendingPostId(id: unknown): number | null {
+  if (typeof id !== 'string') return null
+  const m = PENDING_POST_RE.exec(id)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
+function toPost(row: PostRow): BridgePost {
+  const pk = Number(row.id)
+  const flags = Number(row.flags) || 0
+  return {
+    pk,
+    id: row.thread_id || pendingPostId(pk),
+    threadId: row.thread_id,
+    forumId: row.channel_id,
+    guildId: row.guild_id,
+    name: row.name,
+    ownerKey: row.owner_key,
+    ownerName: row.owner_name || '',
+    ownerAvatar: row.owner_avatar,
+    ownerColor: row.owner_color,
+    appliedTags: Array.isArray(row.applied_tags) ? row.applied_tags : [],
+    flags,
+    pinned: (flags & CHANNEL_FLAG_PINNED) !== 0,
+    archived: row.archived === true,
+    locked: row.locked === true,
+    pending: !row.thread_id,
+    direction: row.direction,
+    starterMessageId: row.starter_message_id === null ? null : Number(row.starter_message_id),
+    lastActivityAt: isoOf(row.last_activity_at) || '',
+    createdAt: isoOf(row.created_at) || '',
+    deletedAt: isoOf(row.deleted_at),
+    deliveryError: row.delivery_error ?? null,
+    activityKey: row.activity_key,
+    createdKey: row.created_key,
+  }
+}
+
+export async function postByPk(pk: number): Promise<BridgePost | null> {
+  const { rows } = await query<PostRow>(`SELECT ${postCols()} FROM discord_bridge_post WHERE id = $1`, [pk])
+  return rows[0] ? toPost(rows[0]) : null
+}
+
+export async function postByThreadId(threadId: string): Promise<BridgePost | null> {
+  const { rows } = await query<PostRow>(`SELECT ${postCols()} FROM discord_bridge_post WHERE thread_id = $1`, [threadId])
+  return rows[0] ? toPost(rows[0]) : null
+}
+
+// A post by either id form (thread id or 'post:<pk>').
+export async function postFor(id: string): Promise<BridgePost | null> {
+  const pk = parsePendingPostId(id)
+  if (pk !== null) return postByPk(pk)
+  return /^\d{15,22}$/.test(id) ? postByThreadId(id) : null
+}
+
+// What a channel-scoped request acts on. `channel` is the row every gate runs
+// on: the channel itself, or the post's FORUM (threads have no overwrites of
+// their own and inherit the forum's permissions, timeouts and bans). `id` is
+// the message scope: the channel id or the post id (a delivered pending post
+// resolves to its thread id).
+export interface BridgeScope {
+  id: string
+  channel: BridgeChannel
+  post: BridgePost | null
+}
+
+export async function scopeFor(id: string): Promise<BridgeScope | null> {
+  if (!id || id.length > 40) return null
+  const pk = parsePendingPostId(id)
+  if (pk === null) {
+    const channel = await channelFor(id)
+    if (channel) return { id, channel, post: null }
+  }
+  const post = pk !== null ? await postByPk(pk) : await postFor(id)
+  if (!post || post.deletedAt) return null
+  const channel = await channelFor(post.forumId)
+  if (!channel || !isForumType(channel.type)) return null
+  return { id: post.id, channel, post }
+}
+
+// A thread as the bot (discord.js) or the API (raw Discord JSON) sees it.
+export interface PostThreadFields {
+  threadId: string
+  forumId: string
+  guildId: string
+  name: string
+  ownerId: string | null
+  appliedTags: string[]
+  flags: number
+  archived: boolean
+  locked: boolean
+  autoArchiveDuration: number | null
+  archiveTimestamp: string | null
+  rateLimitPerUser: number
+  messageCount: number
+  totalMessageSent: number
+  lastMessageId: string | null
+  // thread_metadata.create_timestamp, else the snowflake time.
+  createdAt: string
+}
+
+const DISCORD_EPOCH = 1420070400000n
+
+// A snowflake's creation time as ISO (null when malformed). Pure.
+export function snowflakeTime(id: string | null | undefined): string | null {
+  if (!id || !/^\d{1,22}$/.test(id)) return null
+  try {
+    return new Date(Number((BigInt(id) >> 22n) + DISCORD_EPOCH)).toISOString()
+  } catch {
+    return null
+  }
+}
+
+// Raw Discord thread JSON (GET/PATCH /channels/{thread}) → post fields; null
+// when it isn't a thread in a channel. Pure.
+export function postFieldsFromRawThread(raw: unknown, guildIdFallback = ''): PostThreadFields | null {
+  if (!raw || typeof raw !== 'object') return null
+  const t = raw as Record<string, unknown>
+  if (typeof t.id !== 'string' || typeof t.parent_id !== 'string' || ![10, 11, 12].includes(Number(t.type))) return null
+  const meta = (t.thread_metadata && typeof t.thread_metadata === 'object' ? t.thread_metadata : {}) as Record<string, unknown>
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  const created = typeof meta.create_timestamp === 'string' ? isoOf(meta.create_timestamp) : null
+  return {
+    threadId: t.id,
+    forumId: t.parent_id,
+    guildId: typeof t.guild_id === 'string' ? t.guild_id : guildIdFallback,
+    name: typeof t.name === 'string' ? t.name : '',
+    ownerId: typeof t.owner_id === 'string' ? t.owner_id : null,
+    appliedTags: Array.isArray(t.applied_tags) ? t.applied_tags.filter((x): x is string => typeof x === 'string') : [],
+    flags: num(t.flags),
+    archived: meta.archived === true,
+    locked: meta.locked === true,
+    autoArchiveDuration: typeof meta.auto_archive_duration === 'number' ? meta.auto_archive_duration : null,
+    archiveTimestamp: typeof meta.archive_timestamp === 'string' ? isoOf(meta.archive_timestamp) : null,
+    rateLimitPerUser: num(t.rate_limit_per_user),
+    messageCount: num(t.message_count),
+    totalMessageSent: num(t.total_message_sent),
+    lastMessageId: typeof t.last_message_id === 'string' ? t.last_message_id : null,
+    createdAt: created || snowflakeTime(t.id) || new Date().toISOString(),
+  }
+}
+
+// Did anything a client renders change between two states of a post? Pure.
+export function postStateChanged(prev: Pick<BridgePost, 'name' | 'appliedTags' | 'flags' | 'archived' | 'locked' | 'deletedAt' | 'forumId'> | null, next: Pick<BridgePost, 'name' | 'appliedTags' | 'flags' | 'archived' | 'locked' | 'deletedAt' | 'forumId'>): boolean {
+  if (!prev) return true
+  return prev.name !== next.name
+    || prev.flags !== next.flags
+    || prev.archived !== next.archived
+    || prev.locked !== next.locked
+    || Boolean(prev.deletedAt) !== Boolean(next.deletedAt)
+    || prev.forumId !== next.forumId
+    || prev.appliedTags.join(',') !== next.appliedTags.join(',')
+}
+
+// Upsert a Discord thread as a post (bot gateway/reconcile, API post-moderate
+// echo). A web post keeps its owner and direction; owner display fields are
+// only filled when empty. Returns the post, whether it was new, and whether
+// anything a client renders changed.
+export async function upsertDiscordPost(
+  f: PostThreadFields,
+  owner: { name?: string | null; avatar?: string | null; color?: string | null } = {},
+): Promise<{ post: BridgePost; created: boolean; changed: boolean }> {
+  const prev = await postByThreadId(f.threadId)
+  const lastAt = snowflakeTime(f.lastMessageId)
+  const { rows } = await query<PostRow>(
+    `INSERT INTO discord_bridge_post (thread_id, channel_id, guild_id, name, owner_key, owner_name, owner_avatar, owner_color,
+       applied_tags, flags, archived, locked, auto_archive_duration, archive_timestamp, rate_limit_per_user, message_count,
+       total_message_sent, last_message_id, created_at, last_activity_at, direction)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14::timestamptz, $15, $16, $17, $18,
+       $19::timestamptz, GREATEST($19::timestamptz, COALESCE($20::timestamptz, $19::timestamptz)), 'discord')
+     ON CONFLICT (thread_id) DO UPDATE SET
+       channel_id = EXCLUDED.channel_id,
+       guild_id = EXCLUDED.guild_id,
+       name = EXCLUDED.name,
+       owner_name = CASE WHEN discord_bridge_post.owner_name = '' THEN EXCLUDED.owner_name ELSE discord_bridge_post.owner_name END,
+       owner_avatar = COALESCE(discord_bridge_post.owner_avatar, EXCLUDED.owner_avatar),
+       owner_color = COALESCE(discord_bridge_post.owner_color, EXCLUDED.owner_color),
+       applied_tags = EXCLUDED.applied_tags,
+       flags = EXCLUDED.flags,
+       archived = EXCLUDED.archived,
+       locked = EXCLUDED.locked,
+       auto_archive_duration = EXCLUDED.auto_archive_duration,
+       archive_timestamp = EXCLUDED.archive_timestamp,
+       rate_limit_per_user = EXCLUDED.rate_limit_per_user,
+       message_count = EXCLUDED.message_count,
+       total_message_sent = EXCLUDED.total_message_sent,
+       last_message_id = COALESCE(EXCLUDED.last_message_id, discord_bridge_post.last_message_id),
+       last_activity_at = GREATEST(discord_bridge_post.last_activity_at, COALESCE($20::timestamptz, discord_bridge_post.last_activity_at)),
+       deleted_at = NULL
+     RETURNING ${postCols()}`,
+    [
+      f.threadId, f.forumId, f.guildId, f.name.slice(0, 100), f.ownerId ? `discord:${f.ownerId}` : 'discord:0',
+      owner.name || '', owner.avatar ?? null, owner.color ?? null,
+      f.appliedTags.slice(0, 5), f.flags | 0, f.archived, f.locked, f.autoArchiveDuration, f.archiveTimestamp,
+      f.rateLimitPerUser | 0, f.messageCount | 0, f.totalMessageSent | 0, f.lastMessageId, f.createdAt, lastAt,
+    ],
+  )
+  const post = toPost(rows[0])
+  return { post, created: !prev, changed: postStateChanged(prev, post) }
+}
+
+// A new message landed in a post: bump "Recently Active" and remember the
+// starter row. `postId` is a thread id or 'post:<pk>'.
+export async function touchPost(postId: string, at: Date | string, starterMessageId: number | null = null): Promise<boolean> {
+  const pk = parsePendingPostId(postId)
+  const { rowCount } = await query(
+    `UPDATE discord_bridge_post
+        SET last_activity_at = GREATEST(last_activity_at, $2::timestamptz),
+            starter_message_id = COALESCE(starter_message_id, $3::bigint)
+      WHERE ${pk !== null ? 'id = $1::bigint' : 'thread_id = $1'} AND deleted_at IS NULL`,
+    [pk !== null ? pk : postId, at instanceof Date ? at.toISOString() : at, starterMessageId],
+  )
+  return Boolean(rowCount)
+}
+
+// Create a web post and its pending starter row in one transaction.
+// Idempotent on (owner key, clientId): a retry returns the first post.
+export async function createWebPost(input: {
+  forumId: string
+  guildId: string
+  name: string
+  appliedTags: string[]
+  ownerKey: string
+  ownerName: string
+  ownerAvatar: string | null
+  ownerColor: string | null
+  authorRole: string | null
+  content: string
+  mentions: unknown[]
+  clientId: string | null
+}): Promise<{ post: BridgePost; message: BridgeMessage; existed: boolean }> {
+  const client = await getPool().connect()
+  const existing = async (): Promise<{ post: BridgePost; message: BridgeMessage; existed: boolean } | null> => {
+    if (!input.clientId) return null
+    const { rows } = await client.query<PostRow>(
+      `SELECT ${postCols()} FROM discord_bridge_post WHERE owner_key = $1 AND client_id = $2`,
+      [input.ownerKey, input.clientId],
+    )
+    if (!rows[0]) return null
+    const post = toPost(rows[0])
+    const message = post.starterMessageId !== null ? await messageFor(post.starterMessageId) : null
+    return message ? { post, message, existed: true } : null
+  }
+  try {
+    const dup = await existing()
+    if (dup) return dup
+    await client.query('BEGIN')
+    const inserted = await client.query<PostRow>(
+      `INSERT INTO discord_bridge_post (channel_id, guild_id, name, owner_key, owner_name, owner_avatar, owner_color,
+         applied_tags, direction, client_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], 'web', $9)
+       ON CONFLICT (owner_key, client_id) WHERE client_id IS NOT NULL DO NOTHING
+       RETURNING ${postCols()}`,
+      [input.forumId, input.guildId, input.name, input.ownerKey, input.ownerName, input.ownerAvatar, input.ownerColor,
+        input.appliedTags, input.clientId],
+    )
+    if (!inserted.rows[0]) {
+      await client.query('ROLLBACK')
+      const raced = await existing()
+      if (raced) return raced
+      throw new Error('web post insert conflicted without an existing row')
+    }
+    const pk = Number(inserted.rows[0].id)
+    const msg = await client.query<MessageRow>(
+      `INSERT INTO discord_bridge_message
+         (channel_id, direction, author_key, author_name, author_avatar, author_color, author_role, content, mentions)
+       VALUES ($1, 'web', $2, $3, $4, $5, $6, $7, $8::jsonb)
+       RETURNING ${MESSAGE_COLS}`,
+      [pendingPostId(pk), input.ownerKey, input.ownerName, input.ownerAvatar, input.ownerColor, input.authorRole,
+        input.content, JSON.stringify(input.mentions || [])],
+    )
+    const updated = await client.query<PostRow>(
+      `UPDATE discord_bridge_post SET starter_message_id = $2 WHERE id = $1 RETURNING ${postCols()}`,
+      [pk, msg.rows[0].id],
+    )
+    await client.query('COMMIT')
+    return { post: toPost(updated.rows[0]), message: toMessage(msg.rows[0]), existed: false }
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+// The webhook created the thread for pending post `pk`: in one transaction,
+// give the post its thread id, re-key its rows from 'post:<pk>' to the thread
+// and attach the starter's Discord id (= the thread id). A row the gateway
+// raced in for the same thread / starter is dropped first. Returns the post.
+export async function deliverPendingPost(pk: number, threadId: string, starterRowId: number, starterDiscordId: string): Promise<BridgePost | null> {
+  const client = await getPool().connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(`DELETE FROM discord_bridge_post WHERE thread_id = $1 AND id <> $2 AND direction = 'discord'`, [threadId, pk])
+    await client.query(
+      `DELETE FROM discord_bridge_message WHERE discord_message_id = $1 AND id <> $2 AND direction = 'discord'`,
+      [starterDiscordId, starterRowId],
+    )
+    const { rows } = await client.query<PostRow>(
+      `UPDATE discord_bridge_post SET thread_id = $2 WHERE id = $1 AND thread_id IS NULL RETURNING ${postCols()}`,
+      [pk, threadId],
+    )
+    await client.query(`UPDATE discord_bridge_message SET channel_id = $2 WHERE channel_id = $1`, [pendingPostId(pk), threadId])
+    await client.query(
+      `UPDATE discord_bridge_message SET discord_message_id = $2 WHERE id = $1 AND discord_message_id IS NULL`,
+      [starterRowId, starterDiscordId],
+    )
+    await client.query('COMMIT')
+    return rows[0] ? toPost(rows[0]) : postByPk(pk)
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+// Drop a pending web post (its delivery failed for good, `code` = Discord's
+// error code, or its author deleted the starter). Returns the post or null.
+export async function dropPendingPost(pk: number, code: number | null): Promise<BridgePost | null> {
+  const { rows } = await query<PostRow>(
+    `UPDATE discord_bridge_post SET deleted_at = NOW(), delivery_error = $2
+      WHERE id = $1 AND thread_id IS NULL AND deleted_at IS NULL RETURNING ${postCols()}`,
+    [pk, code],
+  )
+  if (!rows[0]) return null
+  await query(
+    `UPDATE discord_bridge_message SET deleted_at = NOW() WHERE channel_id = $1 AND deleted_at IS NULL`,
+    [pendingPostId(pk)],
+  )
+  return toPost(rows[0])
+}
+
+// The thread is gone (THREAD_DELETE, a staff delete, a reconcile pass that no
+// longer finds it): tombstone the post and every message in it (Discord sends
+// no per-message deletes). Returns the post, or null when already gone.
+export async function deletePostByThread(threadId: string): Promise<BridgePost | null> {
+  const { rows } = await query<PostRow>(
+    `UPDATE discord_bridge_post SET deleted_at = NOW() WHERE thread_id = $1 AND deleted_at IS NULL RETURNING ${postCols()}`,
+    [threadId],
+  )
+  if (!rows[0]) return null
+  await query(
+    `UPDATE discord_bridge_message SET deleted_at = NOW(), content = '', attachments = '[]', embeds = '[]'
+      WHERE channel_id = $1 AND deleted_at IS NULL`,
+    [threadId],
+  )
+  return toPost(rows[0])
+}
+
+// Live thread ids of one forum (reconcile: posts Discord no longer lists).
+export async function forumThreadIds(forumId: string): Promise<string[]> {
+  const { rows } = await query<{ thread_id: string }>(
+    `SELECT thread_id FROM discord_bridge_post WHERE channel_id = $1 AND thread_id IS NOT NULL AND deleted_at IS NULL`,
+    [forumId],
+  )
+  return rows.map((r) => r.thread_id)
+}
+
+// Live thread id → forum id for every bridged forum's posts (the bot's
+// thread map at startup).
+export async function liveThreadForums(): Promise<Map<string, string>> {
+  const { rows } = await query<{ thread_id: string; channel_id: string }>(
+    `SELECT p.thread_id, p.channel_id FROM discord_bridge_post p
+       JOIN discord_bridge_channel c ON c.channel_id = p.channel_id AND c.enabled = TRUE
+      WHERE p.thread_id IS NOT NULL AND p.deleted_at IS NULL`,
+  )
+  return new Map(rows.map((r) => [r.thread_id, r.channel_id]))
+}
+
+// Every live post of the given forums (search: a forum's messages live in its
+// posts). Ids are thread ids or 'post:<pk>'.
+export async function postsOfForums(forumIds: string[]): Promise<Array<{ id: string; forumId: string; name: string }>> {
+  if (!forumIds.length) return []
+  const { rows } = await query<{ id: string; thread_id: string | null; channel_id: string; name: string }>(
+    `SELECT id, thread_id, channel_id, name FROM discord_bridge_post
+      WHERE channel_id = ANY($1::text[]) AND deleted_at IS NULL
+      ORDER BY last_activity_at DESC LIMIT 5000`,
+    [forumIds],
+  )
+  return rows.map((r) => ({ id: r.thread_id || pendingPostId(Number(r.id)), forumId: r.channel_id, name: r.name }))
+}
+
+// The first image a card can show: an image attachment, else an embed's
+// image / thumbnail / video thumbnail. Pure.
+export function starterImage(attachments: unknown, embeds: unknown): string | null {
+  const str = (v: unknown) => (typeof v === 'string' && /^https?:\/\//.test(v) ? v : null)
+  if (Array.isArray(attachments)) {
+    for (const a of attachments) {
+      if (!a || typeof a !== 'object') continue
+      const o = a as Record<string, unknown>
+      const type = typeof o.contentType === 'string' ? o.contentType : typeof o.content_type === 'string' ? o.content_type : ''
+      if (type.startsWith('image/')) {
+        const url = str(o.proxyUrl) || str(o.url)
+        if (url) return url
+      }
+    }
+  }
+  if (Array.isArray(embeds)) {
+    for (const e of embeds) {
+      if (!e || typeof e !== 'object') continue
+      const o = e as Record<string, Record<string, unknown> | undefined>
+      for (const key of ['image', 'thumbnail'] as const) {
+        const media = o[key]
+        const url = media ? str(media.proxy_url) || str(media.url) : null
+        if (url) return url
+      }
+    }
+  }
+  return null
+}
+
+// Contract views for a batch of posts (starter preview, reply count and the
+// newest message id from holt's own rows, the starter's reactions), in input
+// order.
+export async function forumPostViews(posts: BridgePost[]): Promise<ForumPostView[]> {
+  if (!posts.length) return []
+  const { rows } = await query<{
+    id: string
+    s_id: string | null
+    s_content: string | null
+    s_attachments: unknown
+    s_embeds: unknown
+    replies: string | null
+    last_id: string | null
+  }>(
+    `SELECT p.id, s.id AS s_id, s.content AS s_content, s.attachments AS s_attachments, s.embeds AS s_embeds,
+            st.replies::text AS replies, st.last_id
+       FROM discord_bridge_post p
+       LEFT JOIN LATERAL (
+         SELECT m.id, m.content, m.attachments, m.embeds FROM discord_bridge_message m
+          WHERE m.id = p.starter_message_id OR (p.thread_id IS NOT NULL AND m.discord_message_id = p.thread_id)
+          ORDER BY m.id LIMIT 1
+       ) s ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT count(*) FILTER (WHERE s.id IS NULL OR m.id <> s.id) AS replies, max(m.id) AS last_id
+           FROM discord_bridge_message m
+          WHERE m.channel_id = COALESCE(p.thread_id, 'post:' || p.id) AND m.deleted_at IS NULL
+       ) st ON TRUE
+      WHERE p.id = ANY($1::bigint[])`,
+    [posts.map((p) => p.pk)],
+  )
+  const byPk = new Map(rows.map((r) => [Number(r.id), r]))
+  const starterIds = rows.map((r) => (r.s_id === null ? null : Number(r.s_id))).filter((id): id is number => id !== null)
+  const reactions = new Map<number, Array<{ emoji: string; count: number }>>()
+  if (starterIds.length) {
+    const { rows: rx } = await query<{ message_id: string; emoji: string; n: string }>(
+      `SELECT message_id, emoji, count(*)::text AS n FROM discord_bridge_reaction
+        WHERE message_id = ANY($1::bigint[]) AND reactor_key <> $2
+        GROUP BY message_id, emoji ORDER BY count(*) DESC, min(id) ASC`,
+      [starterIds, BRIDGE_BOT_KEY],
+    )
+    for (const r of rx) {
+      const list = reactions.get(Number(r.message_id)) || []
+      list.push({ emoji: r.emoji, count: Number(r.n) })
+      reactions.set(Number(r.message_id), list)
+    }
+  }
+  return posts.map((post) => {
+    const r = byPk.get(post.pk)
+    const starterId = r?.s_id ? Number(r.s_id) : null
+    return {
+      id: post.id,
+      forumId: post.forumId,
+      guildId: post.guildId,
+      name: post.name,
+      ownerKey: post.ownerKey,
+      ownerName: post.ownerName,
+      ownerAvatar: sameOriginAvatarUrl(post.ownerAvatar),
+      ownerColor: post.ownerColor,
+      appliedTags: post.appliedTags,
+      pinned: post.pinned,
+      archived: post.archived,
+      locked: post.locked,
+      pending: post.pending,
+      messageCount: Number(r?.replies || 0),
+      lastMessageId: r?.last_id ? Number(r.last_id) : null,
+      lastActivityAt: post.lastActivityAt,
+      createdAt: post.createdAt,
+      starter: {
+        messageId: starterId,
+        content: (r?.s_content || '').slice(0, 300),
+        image: r ? starterImage(r.s_attachments, r.s_embeds) : null,
+        reactions: starterId !== null ? reactions.get(starterId) || [] : [],
+      },
+    }
+  })
+}
+
+export async function forumPostView(post: BridgePost): Promise<ForumPostView> {
+  return (await forumPostViews([post]))[0]
+}
+
+// --- Post list cursors ---------------------------------------------------------
+// An opaque base64url JSON {s: sort, k: the sort key (Postgres timestamptz
+// text), i: post pk}. A cursor for the other sort is rejected (null).
+
+const PG_TS_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2}(:?\d{2}){0,2}|Z)?$/
+
+export function encodePostCursor(sort: PostListSort, key: string, pk: number): string {
+  return Buffer.from(JSON.stringify({ s: sort, k: key, i: pk })).toString('base64url')
+}
+
+export function decodePostCursor(raw: string | null | undefined, sort: PostListSort): { key: string; pk: number } | null {
+  if (!raw || raw.length > 200 || !/^[A-Za-z0-9_-]+$/.test(raw)) return null
+  try {
+    const o = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as { s?: unknown; k?: unknown; i?: unknown }
+    if (o.s !== sort || typeof o.k !== 'string' || !PG_TS_RE.test(o.k)) return null
+    const pk = Number(o.i)
+    if (!Number.isSafeInteger(pk) || pk <= 0) return null
+    return { key: o.k, pk }
+  } catch {
+    return null
+  }
+}
+
+// One page of a forum's posts (GET posts). Pinned posts come first on the
+// first page only and are never repeated on later pages; `total` counts every
+// match, pinned included. Every filter value is a bound parameter.
+export async function listPosts(opts: {
+  forumId: string
+  sort: PostListSort
+  tags: string[]
+  match: 'some' | 'all'
+  q: string
+  cursor: { key: string; pk: number } | null
+  limit: number
+}): Promise<{ posts: ForumPostView[]; nextCursor: string | null; total: number }> {
+  const params: unknown[] = []
+  const bind = (value: unknown) => { params.push(value); return `$${params.length}` }
+  const where = ['p.deleted_at IS NULL', `p.channel_id = ${bind(opts.forumId)}`]
+  if (opts.tags.length) {
+    where.push(opts.match === 'all' ? `p.applied_tags @> ${bind(opts.tags)}::text[]` : `p.applied_tags && ${bind(opts.tags)}::text[]`)
+  }
+  const q = opts.q.trim()
+  if (q) {
+    const like = bind(`%${escapeLike(q)}%`)
+    where.push(`(p.name ILIKE ${like} ESCAPE '\\' OR EXISTS (
+      SELECT 1 FROM discord_bridge_message m
+       WHERE (m.id = p.starter_message_id OR (p.thread_id IS NOT NULL AND m.discord_message_id = p.thread_id))
+         AND m.deleted_at IS NULL AND m.content ILIKE ${like} ESCAPE '\\'))`)
+  }
+  const baseWhere = where.join(' AND ')
+  const baseParams = [...params]
+  const sortCol = opts.sort === 'created' ? 'p.created_at' : 'p.last_activity_at'
+  const limit = Math.min(Math.max(Math.trunc(opts.limit) || 25, 1), 50)
+
+  const total = await query<{ n: string }>(`SELECT count(*)::text AS n FROM discord_bridge_post p WHERE ${baseWhere}`, baseParams)
+  const pinned = opts.cursor
+    ? []
+    : (await query<PostRow>(
+      `SELECT ${postCols('p')} FROM discord_bridge_post p
+        WHERE ${baseWhere} AND (p.flags & ${CHANNEL_FLAG_PINNED}) <> 0
+        ORDER BY ${sortCol} DESC, p.id DESC LIMIT 10`,
+      baseParams,
+    )).rows
+  const pageWhere = [baseWhere, `(p.flags & ${CHANNEL_FLAG_PINNED}) = 0`]
+  if (opts.cursor) pageWhere.push(`(${sortCol}, p.id) < (${bind(opts.cursor.key)}::timestamptz, ${bind(opts.cursor.pk)}::bigint)`)
+  const limitPh = bind(limit + 1)
+  const page = await query<PostRow>(
+    `SELECT ${postCols('p')} FROM discord_bridge_post p
+      WHERE ${pageWhere.join(' AND ')}
+      ORDER BY ${sortCol} DESC, p.id DESC LIMIT ${limitPh}`,
+    params,
+  )
+  const pageRows = page.rows.slice(0, limit).map(toPost)
+  const last = pageRows[pageRows.length - 1]
+  const nextCursor = page.rows.length > limit && last
+    ? encodePostCursor(opts.sort, opts.sort === 'created' ? last.createdKey : last.activityKey, last.pk)
+    : null
+  return {
+    posts: await forumPostViews([...pinned.map(toPost), ...pageRows]),
+    nextCursor,
+    total: Number(total.rows[0]?.n || 0),
+  }
+}
+
+// A post event for the realtime bus (bridge.post.*): channelId = the forum,
+// so visibility is the forum's.
+export async function emitPostEvent(type: 'bridge.post.created' | 'bridge.post.updated', post: BridgePost): Promise<void> {
+  await emit(DISCORD_BRIDGE_OWNER_KEY, type, { channelId: post.forumId, post: await forumPostView(post) })
 }

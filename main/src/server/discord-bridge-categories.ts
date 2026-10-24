@@ -1,31 +1,53 @@
 // Category-based bridging (config.discord.bridgeCategories), pure core.
 //
-// Every text (0) / announcement (5) channel inside a configured category is
-// bridged, plus the individually configured legacy channels
-// (config.discord.bridgeChannels). The bot (discord-bridge-bot.ts) feeds this
+// Every text (0) / announcement (5) / forum (15) channel inside a configured
+// category is bridged, plus the individually configured legacy channels
+// (config.discord.bridgeChannels). Media channels (16, a Discord beta) only
+// with config.discord.bridge.mediaChannels === true. Threads (forum posts)
+// are never configured or bridged on their own: they come with their forum. The bot (discord-bridge-bot.ts) feeds this
 // the gateway's channel cache on startup and after every channel / guild
 // gateway event, then upserts the result, disables enabled rows outside it,
 // and emits `bridge.channels.changed { guildId }` for every guild whose
 // bridged set or layout signature changed.
 
-// Discord channel types the bridge mirrors (the chatbox renders both).
-export const BRIDGEABLE_CHANNEL_TYPES: ReadonlySet<number> = new Set([0, 5])
+// Discord channel types the bridge mirrors: text and announcement channels
+// (message lists) and forums (post lists).
+export const BRIDGEABLE_CHANNEL_TYPES: ReadonlySet<number> = new Set([0, 5, 15])
+export const MEDIA_CHANNEL_TYPE = 16
+export const FORUM_CHANNEL_TYPE = 15
 export const CATEGORY_CHANNEL_TYPE = 4
+// Gateway-only channel flag (from 2026-11-16): the bot can't view the
+// channel and its metadata is redacted. Never bridged, whatever its name.
+export const CHANNEL_FLAG_OBFUSCATED = 1 << 17
 
 export interface BridgeChannelLike {
   id: string
   type: number
   guildId: string
   parentId: string | null
+  // Discord channel flags (CHANNEL_OBFUSCATED); absent = 0.
+  flags?: number
+}
+
+export interface BridgeableOptions {
+  // config.discord.bridge.mediaChannels === true.
+  media?: boolean
+}
+
+export function isThreadOnlyType(type: number): boolean {
+  return type === FORUM_CHANNEL_TYPE || type === MEDIA_CHANNEL_TYPE
 }
 
 // Is this channel bridged under the configured categories / legacy ids?
 export function isBridgeable(
-  channel: Pick<BridgeChannelLike, 'id' | 'type' | 'parentId'>,
+  channel: Pick<BridgeChannelLike, 'id' | 'type' | 'parentId' | 'flags'>,
   categoryIds: ReadonlySet<string>,
   legacyIds: ReadonlySet<string>,
+  opts: BridgeableOptions = {},
 ): boolean {
-  if (!BRIDGEABLE_CHANNEL_TYPES.has(channel.type)) return false
+  const typeOk = BRIDGEABLE_CHANNEL_TYPES.has(channel.type) || (opts.media === true && channel.type === MEDIA_CHANNEL_TYPE)
+  if (!typeOk) return false
+  if (((channel.flags ?? 0) & CHANNEL_FLAG_OBFUSCATED) !== 0) return false
   return legacyIds.has(channel.id) || Boolean(channel.parentId && categoryIds.has(channel.parentId))
 }
 
@@ -34,11 +56,12 @@ export function resolveBridgedChannels<T extends BridgeChannelLike>(
   channels: Iterable<T>,
   categoryIds: ReadonlySet<string>,
   legacyIds: ReadonlySet<string>,
+  opts: BridgeableOptions = {},
 ): T[] {
   const out: T[] = []
   const seen = new Set<string>()
   for (const channel of channels) {
-    if (seen.has(channel.id) || !isBridgeable(channel, categoryIds, legacyIds)) continue
+    if (seen.has(channel.id) || !isBridgeable(channel, categoryIds, legacyIds, opts)) continue
     seen.add(channel.id)
     out.push(channel)
   }
@@ -47,8 +70,10 @@ export function resolveBridgedChannels<T extends BridgeChannelLike>(
 
 // What the web sidebar shows of one guild: each bridged channel's name,
 // topic, position, type, category and permission overwrites, and each of
-// their categories' name, position and overwrites. Any change here means the
-// guild's /channels response may differ.
+// their categories' name, position and overwrites. A forum adds its settings
+// (forumSignature: tags, flags, sort / layout defaults, default reaction), so
+// a tag or guidelines change emits bridge.channels.changed. Any change here
+// means the guild's /channels response may differ.
 export interface LayoutEntry {
   id: string
   guildId: string
@@ -59,13 +84,28 @@ export interface LayoutEntry {
   type: number
   parentId: string | null
   overwrites: string
+  forum?: string
+}
+
+// A stable string for a forum's settings (order of tags kept: Discord's
+// order is the display order). Pure.
+export function forumSignature(f: {
+  availableTags: Array<{ id: string; name: string; moderated: boolean; emoji_id: string | null; emoji_name: string | null }>
+  defaultReactionEmoji: { emoji_id: string | null; emoji_name: string | null } | null
+  defaultSortOrder: number | null
+  defaultForumLayout: number
+  flags: number
+}): string {
+  const tags = f.availableTags.map((t) => [t.id, t.name, t.moderated ? 1 : 0, t.emoji_id || '', t.emoji_name || ''].join(':')).join(',')
+  const reaction = f.defaultReactionEmoji ? `${f.defaultReactionEmoji.emoji_id || ''}:${f.defaultReactionEmoji.emoji_name || ''}` : ''
+  return [tags, reaction, f.defaultSortOrder ?? '', f.defaultForumLayout, f.flags].join('|')
 }
 
 export function layoutSignatures(entries: Iterable<LayoutEntry>): Map<string, string> {
   const byGuild = new Map<string, string[]>()
   for (const e of entries) {
     const list = byGuild.get(e.guildId) || []
-    list.push([e.kind, e.id, e.name, e.topic || '', e.position, e.type, e.parentId || '', e.overwrites].join('\u0001'))
+    list.push([e.kind, e.id, e.name, e.topic || '', e.position, e.type, e.parentId || '', e.overwrites, e.forum || ''].join('\u0001'))
     byGuild.set(e.guildId, list)
   }
   const out = new Map<string, string>()

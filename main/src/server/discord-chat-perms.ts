@@ -19,9 +19,12 @@ export const Perm = {
   ADD_REACTIONS: 1n << 6n,    // react to messages (Discord grants this to @everyone by default)
   MENTION_EVERYONE: 1n << 7n, // mention @everyone, @here, and all roles (Discord's single perm; NOT granted to members)
   MENTION_ROLES: 1n << 8n,    // mention individual roles (kept separate for granularity; MENTION_EVERYONE implies it)
+  // Reply in a forum post (Discord's SEND_MESSAGES_IN_THREADS). SEND_MESSAGES
+  // on a forum is what creates posts; inside a post only this bit sends.
+  SEND_IN_POSTS: 1n << 9n,
 } as const
 
-export const MEMBER_PERMS = Perm.VIEW_MESSAGES | Perm.SEND_MESSAGES | Perm.ADD_REACTIONS
+export const MEMBER_PERMS = Perm.VIEW_MESSAGES | Perm.SEND_MESSAGES | Perm.ADD_REACTIONS | Perm.SEND_IN_POSTS
 export const MOD_PERMS = MEMBER_PERMS | Perm.TIMEOUT_WEBHOOKS | Perm.SEND_EMBEDS | Perm.MENTION_EVERYONE | Perm.MENTION_ROLES
 export const ADMIN_PERMS = MOD_PERMS | Perm.BAN_WEBHOOKS | Perm.MANAGE_WEBHOOKS
 export const OWNER_PERMS = ADMIN_PERMS // owners == admins on bits; hierarchy is by position
@@ -284,6 +287,9 @@ export const DiscordBit = {
   ATTACH_FILES: 1n << 15n,
   READ_MESSAGE_HISTORY: 1n << 16n,
   MENTION_EVERYONE: 1n << 17n,
+  MANAGE_THREADS: 1n << 34n,
+  SEND_MESSAGES_IN_THREADS: 1n << 38n,
+  PIN_MESSAGES: 1n << 51n,
 } as const
 
 // One channel's Discord permissions for a webhook, computed over its
@@ -315,14 +321,22 @@ export interface DiscordChannelBits {
 //      VIEW_CHANNEL ⇒ nothing; no SEND_MESSAGES ⇒ no mentions/embeds):
 //        VIEW_CHANNEL → VIEW_MESSAGES        SEND_MESSAGES → SEND_MESSAGES
 //        ADD_REACTIONS → ADD_REACTIONS       MENTION_EVERYONE → MENTION_EVERYONE
-//        EMBED_LINKS → SEND_EMBEDS
+//        EMBED_LINKS → SEND_EMBEDS           SEND_MESSAGES_IN_THREADS → SEND_IN_POSTS
+//      In a forum post (`context` 'post') the implicit mention/embed denies
+//      follow SEND_MESSAGES_IN_THREADS instead (SEND_MESSAGES "has no effect
+//      in threads"). A post has no overwrites of its own: `discord` is always
+//      computed on its FORUM.
 //   5. (call sites) bridge webhook overwrites (discord_bridge_webhook_perm,
 //      role then member, deny wins then allow) - webhookOverwrites.
 //   6. (call sites) active timeout ⇒ VIEW-only (applyTimeout).
 //   7. (writeDenialCore) channel lockdown ⇒ staff only.
 // `discord` null = the guild snapshot / channel is unknown: no channel math
 // (fail open to the tier bits, like every other Discord-side gate). Pure.
-export function applyDiscordChannelPerms(perms: ChatPerms, discord: DiscordChannelBits | null): ChatPerms {
+export function applyDiscordChannelPerms(
+  perms: ChatPerms,
+  discord: DiscordChannelBits | null,
+  context: 'channel' | 'post' = 'channel',
+): ChatPerms {
   if (!discord || bypassesOverwrites(perms.tier)) return perms
   const { full, granted } = discord
   let bits = perms.permissions
@@ -330,12 +344,17 @@ export function applyDiscordChannelPerms(perms: ChatPerms, discord: DiscordChann
   // (VIEW itself may come from @everyone; step 4 strips these if the full
   // computation can't VIEW.)
   if (granted & DiscordBit.SEND_MESSAGES) bits |= Perm.SEND_MESSAGES
+  if (granted & DiscordBit.SEND_MESSAGES_IN_THREADS) bits |= Perm.SEND_IN_POSTS
   if (granted & DiscordBit.ADD_REACTIONS) bits |= Perm.ADD_REACTIONS
-  const channelBits = Perm.VIEW_MESSAGES | Perm.SEND_MESSAGES | Perm.ADD_REACTIONS | Perm.MENTION_EVERYONE | Perm.MENTION_ROLES | Perm.SEND_EMBEDS
+  const channelBits = Perm.VIEW_MESSAGES | Perm.SEND_MESSAGES | Perm.SEND_IN_POSTS | Perm.ADD_REACTIONS | Perm.MENTION_EVERYONE | Perm.MENTION_ROLES | Perm.SEND_EMBEDS
+  // The Discord bit a message here needs: SEND_MESSAGES_IN_THREADS in a post.
+  const composeBit = context === 'post' ? DiscordBit.SEND_MESSAGES_IN_THREADS : DiscordBit.SEND_MESSAGES
   if (!(full & DiscordBit.VIEW_CHANNEL)) {
     bits &= ~channelBits
   } else {
-    if (!(full & DiscordBit.SEND_MESSAGES)) bits &= ~(Perm.SEND_MESSAGES | Perm.MENTION_EVERYONE | Perm.MENTION_ROLES | Perm.SEND_EMBEDS)
+    if (!(full & DiscordBit.SEND_MESSAGES)) bits &= ~Perm.SEND_MESSAGES
+    if (!(full & DiscordBit.SEND_MESSAGES_IN_THREADS)) bits &= ~Perm.SEND_IN_POSTS
+    if (!(full & composeBit)) bits &= ~(Perm.MENTION_EVERYONE | Perm.MENTION_ROLES | Perm.SEND_EMBEDS)
     if (!(full & DiscordBit.ADD_REACTIONS)) bits &= ~Perm.ADD_REACTIONS
     if (!(full & DiscordBit.MENTION_EVERYONE)) bits &= ~Perm.MENTION_EVERYONE
     if (!(full & DiscordBit.EMBED_LINKS)) bits &= ~Perm.SEND_EMBEDS
@@ -709,6 +728,14 @@ export interface EffectiveOverwrite {
   view: boolean
   send: boolean
   react: boolean
+  // Reply in a forum post (SEND_IN_POSTS after the overwrites).
+  reply: boolean
+}
+
+// The bridge overwrite editor has one "send" bit: an overwrite on
+// SEND_MESSAGES also covers replying in posts (SEND_IN_POSTS). Pure.
+function withPostSend(bits: bigint): bigint {
+  return hasPerm(bits, Perm.SEND_MESSAGES) ? bits | Perm.SEND_IN_POSTS : bits
 }
 
 // Discord overwrite resolution over a base bitfield: role overwrites (deny
@@ -718,16 +745,17 @@ export function resolveOverwrites(
   role: { allow: bigint; deny: bigint },
   member: { allow: bigint; deny: bigint },
 ): EffectiveOverwrite {
-  let bits = (base & ~role.deny) | role.allow
-  bits = (bits & ~member.deny) | member.allow
+  let bits = (base & ~withPostSend(role.deny)) | withPostSend(role.allow)
+  bits = (bits & ~withPostSend(member.deny)) | withPostSend(member.allow)
   return {
     view: hasPerm(bits, Perm.VIEW_MESSAGES),
     send: hasPerm(bits, Perm.SEND_MESSAGES),
     react: hasPerm(bits, Perm.ADD_REACTIONS),
+    reply: hasPerm(bits, Perm.SEND_IN_POSTS),
   }
 }
 
-const ALL_ALLOWED: EffectiveOverwrite = { view: true, send: true, react: true }
+const ALL_ALLOWED: EffectiveOverwrite = { view: true, send: true, react: true, reply: true }
 
 // The member-level overwrite rows for one webhook: Discord-user rows
 // (subject_type 'user') and site-account rows (subject_type 'site',
@@ -841,7 +869,7 @@ export async function setWebhookMemberPerm(input: {
 // (writeDenial); this core is unit-tested directly.
 
 export type WriteAction =
-  | 'send'            // POST /send
+  | 'send'            // POST /send (in a post: a reply)
   | 'edit'            // POST /edit (same gate as send, at edit time)
   | 'forward'         // POST /forward (destination channel)
   | 'typing'          // POST /typing
@@ -849,6 +877,15 @@ export type WriteAction =
   | 'own-message'     // delete / suppress-embeds on your own message
   | 'manage-messages' // pin / delete / suppress anyone's message (Manage Messages)
   | 'moderate'        // timeout / ban / overwrites / lockdown (bits checked per action)
+  | 'post-create'     // POST /post: a new forum post (SEND_MESSAGES on the forum + tag rules)
+  | 'post-reply'      // a message in a post (SEND_IN_POSTS; 'send'/'forward'/'typing' in a post map here)
+
+// The forum post a write acts in (scope = 'post'): Discord's locked /
+// archived thread rules apply (writeDenialCore).
+export interface WriteGatePost {
+  locked: boolean
+  archived: boolean
+}
 
 export interface WriteGateInput {
   action: WriteAction
@@ -862,6 +899,15 @@ export interface WriteGateInput {
   overwrite: EffectiveOverwrite
   locked: boolean
   timeout: ActiveTimeout | null
+  /** What the request names: an ordinary channel (default), a forum (takes
+   *  posts, no messages), or a post inside a forum. Gates always run on the
+   *  forum for the last two. */
+  scope?: 'channel' | 'forum' | 'post'
+  /** The post (scope 'post'). */
+  post?: WriteGatePost | null
+  /** The forum's tag rules + the tags a new post applies ('post-create').
+   *  Omitted = no tag check (the perms route's canCreatePost). */
+  tags?: { forum: Pick<ForumTagRules, 'requireTag' | 'availableTags'>; applied: string[] } | null
 }
 
 export interface WriteDenial {
@@ -871,6 +917,16 @@ export interface WriteDenial {
 
 const MISSING_ACCESS = 50001
 const MISSING_PERMISSIONS = 50013
+// Discord JSON codes for forum posts.
+export const ForumErrorCode = {
+  CANNOT_SEND_IN_FORUM: 40058,  // a message straight into a forum channel
+  TAG_REQUIRED: 40067,          // REQUIRE_TAG and no tag
+  NO_USABLE_TAGS: 40066,        // only moderated tags exist and the caller lacks MANAGE_THREADS
+  UNKNOWN_TAG: 10087,
+  INVALID_FORM_BODY: 50035,     // name / content / tag count out of range
+  THREAD_ARCHIVED: 50083,       // edit / react in an archived post
+  THREAD_LOCKED: 160005,        // locked post, caller is not staff
+} as const
 
 export function isChatStaff(bits: bigint): boolean {
   return hasPerm(bits, Perm.TIMEOUT_WEBHOOKS) || hasPerm(bits, Perm.MANAGE_WEBHOOKS)
@@ -880,9 +936,87 @@ export function canManageMessages(bits: bigint): boolean {
   return hasPerm(bits, Perm.MANAGE_WEBHOOKS) || hasPerm(bits, Perm.BAN_WEBHOOKS)
 }
 
+// Discord's MANAGE_THREADS analogue for forum posts (lock / unlock, pin,
+// archive, edit tags, rename, delete any post, act in locked posts, apply
+// moderated tags): chat staff, i.e. any moderation bit (mod+). Pure.
+export function canManagePosts(bits: bigint): boolean {
+  return isChatStaff(bits) || canManageMessages(bits)
+}
+
+// --- Forum tags (pure) -----------------------------------------------------------
+
+export interface ForumTagRules {
+  requireTag: boolean
+  availableTags: Array<{ id: string; moderated: boolean }>
+}
+
+export const MAX_POST_TAGS = 5
+
+function tagError(status: number, code: number, error: string): WriteDenial {
+  return { status, body: { error, code } }
+}
+
+// The tags a NEW post applies (Discord's Start Thread rules): at most 5,
+// REQUIRE_TAG needs one (40066 when every tag is moderated and the caller
+// can't set those), every tag must exist on the forum (10087), moderated tags
+// are staff-only (50013). Null = allowed. Pure.
+export function validatePostTags(applied: string[], forum: ForumTagRules, staff: boolean): WriteDenial | null {
+  const unique = [...new Set(applied)]
+  if (unique.length !== applied.length || applied.length > MAX_POST_TAGS) {
+    return tagError(400, ForumErrorCode.INVALID_FORM_BODY, `A post can have at most ${MAX_POST_TAGS} different tags.`)
+  }
+  const byId = new Map(forum.availableTags.map((t) => [t.id, t]))
+  for (const id of applied) {
+    if (!byId.has(id)) return tagError(400, ForumErrorCode.UNKNOWN_TAG, 'Unknown Tag')
+  }
+  if (forum.requireTag && !applied.length) {
+    const usable = staff || forum.availableTags.some((t) => !t.moderated)
+    return usable
+      ? tagError(400, ForumErrorCode.TAG_REQUIRED, 'A tag is required to create a forum post in this channel.')
+      : tagError(403, ForumErrorCode.NO_USABLE_TAGS, 'There are no tags available that can be set by non-moderators.')
+  }
+  if (!staff && applied.some((id) => byId.get(id)!.moderated)) {
+    return tagError(403, MISSING_PERMISSIONS, 'Only moderators can apply this tag.')
+  }
+  return null
+}
+
+// Changing an existing post's tags: the result must still be valid (≤5,
+// known, REQUIRE_TAG), and a non-staff caller may neither add nor remove a
+// moderated tag. Tags the forum no longer offers may stay. Pure.
+export function validateTagChange(before: string[], after: string[], forum: ForumTagRules, staff: boolean): WriteDenial | null {
+  const unique = [...new Set(after)]
+  if (unique.length !== after.length || after.length > MAX_POST_TAGS) {
+    return tagError(400, ForumErrorCode.INVALID_FORM_BODY, `A post can have at most ${MAX_POST_TAGS} different tags.`)
+  }
+  const byId = new Map(forum.availableTags.map((t) => [t.id, t]))
+  const had = new Set(before)
+  for (const id of after) {
+    if (!byId.has(id) && !had.has(id)) return tagError(400, ForumErrorCode.UNKNOWN_TAG, 'Unknown Tag')
+  }
+  if (forum.requireTag && !after.length) {
+    return tagError(400, ForumErrorCode.TAG_REQUIRED, 'A tag is required to create a forum post in this channel.')
+  }
+  if (!staff) {
+    const now = new Set(after)
+    const touched = [...after.filter((id) => !had.has(id)), ...before.filter((id) => !now.has(id))]
+    if (touched.some((id) => byId.get(id)?.moderated)) {
+      return tagError(403, MISSING_PERMISSIONS, 'Only moderators can add or remove this tag.')
+    }
+  }
+  return null
+}
+
 export function writeDenialCore(input: WriteGateInput): WriteDenial | null {
-  const { action, perms } = input
+  const { perms } = input
+  const scope = input.scope || 'channel'
+  const post = scope === 'post' ? input.post || null : null
+  // In a post, sending / forwarding / typing are replies.
+  const action: WriteAction = post && (input.action === 'send' || input.action === 'forward' || input.action === 'typing')
+    ? 'post-reply'
+    : input.action
   const composing = action === 'send' || action === 'edit' || action === 'forward' || action === 'typing'
+    || action === 'post-create' || action === 'post-reply'
   if (composing && !input.emailVerified) {
     return { status: 403, body: { error: 'Verify your email to chat.', requiresVerification: true } }
   }
@@ -895,21 +1029,64 @@ export function writeDenialCore(input: WriteGateInput): WriteDenial | null {
   if (input.timeout && action !== 'own-message') {
     return { status: 403, body: { error: 'You are timed out in this channel.', code: MISSING_PERMISSIONS, timeout: input.timeout } }
   }
+  const staff = canManagePosts(perms.permissions)
+  const lockdown = () => (input.locked && !isChatStaff(perms.permissions)
+    ? { status: 403, body: { error: 'This channel is locked.', code: MISSING_PERMISSIONS, locked: true } }
+    : null)
+  const threadLocked = { status: 403, body: { error: 'This post is locked.', code: ForumErrorCode.THREAD_LOCKED, postLocked: true } }
+  const threadArchived = { status: 400, body: { error: 'This post is archived.', code: ForumErrorCode.THREAD_ARCHIVED, postArchived: true } }
+
+  if (action === 'post-create') {
+    if (scope !== 'forum') return { status: 400, body: { error: 'Posts can only be created in a forum channel.', code: ForumErrorCode.INVALID_FORM_BODY } }
+    if (!hasPerm(perms.permissions, Perm.SEND_MESSAGES) || !input.overwrite.send) {
+      return { status: 403, body: { error: 'You do not have permission to create posts in this channel.', code: MISSING_PERMISSIONS } }
+    }
+    const locked = lockdown()
+    if (locked) return locked
+    return input.tags ? validatePostTags(input.tags.applied, input.tags.forum, staff) : null
+  }
+  if (action === 'post-reply') {
+    if (!post) return { status: 400, body: { error: 'Cannot send messages in a forum channel.', code: ForumErrorCode.CANNOT_SEND_IN_FORUM } }
+    if (!hasPerm(perms.permissions, Perm.SEND_IN_POSTS) || !input.overwrite.reply) {
+      return { status: 403, body: { error: 'You do not have permission to send messages in this post.', code: MISSING_PERMISSIONS } }
+    }
+    const locked = lockdown()
+    if (locked) return locked
+    // Locked posts are read-only for everyone but staff. An archived (not
+    // locked) post takes replies: the delivery unarchives it, like Discord.
+    if (post.locked && !staff) return threadLocked
+    return null
+  }
   if (composing) {
+    // A forum takes posts, not messages.
+    if (scope === 'forum') return { status: 400, body: { error: 'Cannot send messages in a forum channel.', code: ForumErrorCode.CANNOT_SEND_IN_FORUM } }
+    if (post) {
+      // Only 'edit' reaches here inside a post: Discord refuses edits in an
+      // archived post (50083) and non-staff edits in a locked one.
+      if (!hasPerm(perms.permissions, Perm.SEND_IN_POSTS) || !input.overwrite.reply) {
+        return { status: 403, body: { error: 'You do not have permission to send messages in this post.', code: MISSING_PERMISSIONS } }
+      }
+      const locked = lockdown()
+      if (locked) return locked
+      if (post.archived) return threadArchived
+      if (post.locked && !staff) return threadLocked
+      return null
+    }
     if (!hasPerm(perms.permissions, Perm.SEND_MESSAGES) || !input.overwrite.send) {
       return { status: 403, body: { error: 'You do not have permission to send messages in this channel.', code: MISSING_PERMISSIONS } }
     }
-    if (input.locked && !isChatStaff(perms.permissions)) {
-      return { status: 403, body: { error: 'This channel is locked.', code: MISSING_PERMISSIONS, locked: true } }
-    }
-    return null
+    return lockdown()
   }
   if (action === 'react') {
     if (!hasPerm(perms.permissions, Perm.ADD_REACTIONS) || !input.overwrite.react) {
       return { status: 403, body: { error: 'You do not have permission to react in this channel.', code: MISSING_PERMISSIONS } }
     }
+    // Discord: no reactions in an archived post (anyone; staff unarchive first).
+    if (post?.archived) return threadArchived
     return null
   }
+  // Deleting your own message in a locked post needs it active (Discord).
+  if (action === 'own-message' && post && post.locked && post.archived && !staff) return threadLocked
   if (action === 'manage-messages' && !canManageMessages(perms.permissions)) {
     return { status: 403, body: { error: 'Missing Permissions', code: MISSING_PERMISSIONS } }
   }

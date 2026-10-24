@@ -1,0 +1,871 @@
+/* Discord channel-header search (ChannelSearch.tsx) — every value below is
+   Discord's own CSS (assets of web.d3978f1210c00a8f.js), class → our class:
+     search__49676                → .chatSearch (toolbar slot, 244px)
+     search_c322aa / searchBar_c322aa + searchBar__25bec → .chatSearchInner / .chatSearchBar
+     editor__25bec (+ [data-slate-placeholder]) → .chatSearchEditor / .chatSearchPlaceholder
+     iconLayout/iconContainer/icon/clear__0c4c4 → .chatSearchIconLayout …
+     searchToken/searchFilter/searchAnswer_bd8186 → .chatSearchToken/.chatSearchFilter/.chatSearchAnswer
+     container/datePickerContainer/calendar__16eb0 → .chatSearchPopout
+     itemContainer/item/itemIcon/groupWrapper/groupHeader/divider/…__971b5 → popout rows
+     calendarPicker_d27f17 .react-datepicker → .chatSearchCalendar
+     searchResultsWrap/scroller/emptyResults/paginationDock_a98f3b → .chatSearchResults …
+     searchHeader/totalResults/spinnerWrapper/searchModeAndFiltersContainer_ae7890
+     searchResultGroup/channelName_a7e67f, container/searchResult/message/buttonsContainer/button__80bf8
+     pageControl/pageButton/roundButton/activeButton/endButton/gap_c15210
+     button/sm/md/secondary/primary_a22cb0 (mana Button)
+     container/labelContainer/filterSection/dateFilter/removeDateFilterButton/trashIcon_e4772e
+     container/section/actionBar__8a031 (mana Modal)
+   Theme tokens are the midnight values (discord-tokens.css) with Discord's
+   own fallbacks where our token sheet doesn't define them. */
+
+.chat-page {
+  --chat-search-input-border: var(--input-border-default, hsla(240, 4%, 61%, .24));
+  --chat-search-input-bg: var(--input-background-default, rgba(0, 0, 0, .12));
+  --chat-search-placeholder: var(--input-placeholder-text-default, #7d7d87);
+  --chat-search-secondary-bg: var(--control-secondary-background-default, hsla(240, 4%, 61%, .12));
+  --chat-search-secondary-bg-hover: var(--control-secondary-background-hover, hsla(240, 4%, 61%, .2));
+  --chat-search-secondary-bg-active: var(--control-secondary-background-active, hsla(240, 4%, 61%, .24));
+  --chat-search-secondary-border: var(--control-secondary-border-default, hsla(240, 4%, 61%, .16));
+  --chat-search-secondary-text: var(--control-secondary-text-default, #dbdbde);
+  --chat-search-highlight: hsl(40.421 86.364% 56.863% / .3); /* .highlight{background:hsl(var(--yellow-300-hsl)/.3)} */
+}
+
+/* ---- header search bar ---- */
+.chat-page .chatSearch.headerSearchWrap {
+  display: block;
+  flex: 0 1 244px;
+  margin-inline-start: 4px;
+  max-width: 244px;
+  position: relative;
+  width: clamp(64px, 100cqi - 320px, 244px);
+}
+.chat-page .chatSearchInner {
+  overflow: visible;
+  position: relative;
+  z-index: 100;
+}
+.chat-page .chatSearchBar {
+  align-items: center;
+  background: var(--background-gradient-low, var(--chat-search-input-bg));
+  border: 1px solid var(--chat-search-input-border);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  box-sizing: border-box;
+  color: var(--text-default);
+  cursor: text;
+  display: flex;
+  height: 32px;
+  overflow: hidden;
+  padding: 2px 0;
+  transition: width .25s ease;
+  width: 100%;
+}
+.chat-page .chatSearchEditorWrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+.chat-page .chatSearchEditor {
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 22px;
+  max-width: 100%;
+  min-height: 22px;
+  min-width: 0;
+  outline: none;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 calc(var(--space-4) + 2px);
+  scrollbar-width: none;
+  white-space: pre;
+  caret-color: var(--text-default);
+}
+.chat-page .chatSearchEditor::-webkit-scrollbar { display: none; }
+.chat-page .chatSearchPlaceholder {
+  color: var(--chat-search-placeholder);
+  inset-inline: calc(var(--space-4) + 2px) calc(var(--space-4) + 2px);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 22px;
+  overflow: hidden;
+  padding-inline-start: 2px;
+  pointer-events: none;
+  position: absolute;
+  text-overflow: ellipsis;
+  top: 0;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* searchToken_bd8186 — "from:" + " username" render as ONE joined pill. */
+.chat-page .chatSearchToken {
+  align-items: center;
+  background-color: var(--background-surface-highest);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-xs);
+  box-sizing: border-box;
+  color: var(--text-strong);
+  /* Discord renders inline-flex inside Slate (which owns the caret); a real
+     contenteditable needs plain inline boxes or the caret skips over pills.
+     line-height 18px + 1px padding + 1px border = Discord's 22px pill. */
+  display: inline;
+  line-height: 18px;
+  margin-inline-start: unset;
+  padding: 1px var(--space-4);
+  position: relative;
+  top: -1px;
+  vertical-align: baseline;
+}
+.chat-page .chatSearchAnswer {
+  border-end-start-radius: 0;
+  border-start-start-radius: 0;
+  margin-inline: -2px 2px;
+}
+.chat-page .chatSearchFilter {
+  border-end-end-radius: 0;
+  border-start-end-radius: 0;
+  font-weight: var(--font-weight-semibold);
+}
+.chat-page .chatSearchFilter + .chatSearchFilter { padding-inline-start: 2px; }
+.chat-page .chatSearchFilter:has(+ .chatSearchAnswer) { border-inline-end: none; }
+.chat-page .chatSearchFilter + .chatSearchAnswer {
+  border-inline-start: none;
+  padding-inline-start: 0;
+}
+
+/* iconLayout__0c4c4[data-size=sm] (icon-size-xs + space-4*2) */
+.chat-page .chatSearchIconLayout {
+  align-items: center;
+  box-sizing: border-box;
+  cursor: text;
+  display: flex;
+  flex: 0 0 auto;
+  height: 100%;
+  justify-content: center;
+  margin-inline-end: var(--space-4);
+  width: 24px;
+}
+.chat-page .chatSearchIconLayout.pointer { cursor: pointer; }
+.chat-page .chatSearchIconContainer {
+  height: 16px;
+  position: relative;
+  width: 16px;
+}
+.chat-page .chatSearchIconGlyph {
+  box-sizing: border-box;
+  color: var(--interactive-text-default);
+  height: 100%;
+  inset-inline-start: 0;
+  opacity: 0;
+  position: absolute;
+  top: 0;
+  transform: rotate(90deg);
+  transition: transform .1s ease-out, opacity .1s ease-out;
+  width: 100%;
+}
+.chat-page .chatSearchIconGlyph.visible { opacity: 1; transform: rotate(0deg); }
+.chat-page .chatSearchIconLayout:hover .chatSearchClearGlyph { color: var(--interactive-text-hover); }
+.chat-page .chatSearchIconLayout:active .chatSearchClearGlyph { color: var(--interactive-text-active); }
+
+/* ---- autocomplete popout (container__16eb0 + __971b5 rows) ---- */
+.chat-page .chatSearchPopout {
+  background-color: var(--background-surface-high);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-high);
+  box-sizing: border-box;
+  max-height: calc(100vh - 180px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--space-12) var(--space-8);
+  position: absolute;
+  /* scrollbar: the thin variant, owned by chat.css's scrollbar section (a
+     `scrollbar-width: none` here was dead — chat.css loads later and wins). */
+  top: calc(100% + 8px);
+  width: 356px;
+  z-index: 1002;
+}
+.chat-page .chatSearchPopout.datePicker { padding: 0; width: auto; }
+.chat-page .chatSearchRowList,
+.chat-page .chatSearchGroupWrapper {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.chat-page .chatSearchGroupWrapper { display: grid; gap: var(--space-4); }
+.chat-page .chatSearchGroupHeader {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-8);
+}
+.chat-page .chatSearchGroupTitle {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.3333;
+}
+.chat-page .chatSearchDivider {
+  background-color: var(--border-subtle);
+  height: 1px;
+  margin: var(--space-8) calc(var(--space-8) * -1);
+}
+.chat-page .chatSearchClearHistory {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  padding: 0;
+}
+.chat-page .chatSearchClearHistoryIcon { color: var(--text-subtle); cursor: pointer; }
+.chat-page .chatSearchClearHistory:hover .chatSearchClearHistoryIcon { color: var(--text-strong); }
+
+.chat-page .chatSearchItemContainer {
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  list-style: none;
+  overflow: hidden;
+}
+.chat-page .chatSearchItemContainer:active,
+.chat-page .chatSearchItemContainer:hover,
+.chat-page .chatSearchItemContainer[aria-selected=true] {
+  background-color: var(--background-mod-subtle);
+  color: var(--text-strong);
+}
+.chat-page .chatSearchItem {
+  align-items: center;
+  display: flex;
+  -webkit-mask-image: linear-gradient(to right, var(--background-surface-high) 90%, transparent 100%);
+  mask-image: linear-gradient(to right, var(--background-surface-high) 90%, transparent 100%);
+  padding: var(--space-4) var(--space-8);
+}
+.chat-page .chatSearchItemIcon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  height: 20px;
+  margin-inline-end: 8px;
+  width: 20px;
+}
+img.chatSearchItemIcon { border-radius: 50%; }
+.chat-page .chatSearchRowLabel {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2857;
+  white-space: nowrap;
+}
+.chat-page .chatSearchRowSublabel {
+  color: var(--text-muted);
+  display: block;
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2857;
+  white-space: nowrap;
+}
+.chat-page .chatSearchFilterSublabel,
+.chat-page .chatSearchLabelWithElements {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+.chat-page .chatSearchSublabelKey,
+.chat-page .chatSearchSublabelValue,
+.chat-page .chatSearchNameDefault,
+.chat-page .chatSearchUsernameSubtle,
+.chat-page .chatSearchChannelName,
+.chat-page .chatSearchPillText {
+  font-size: 14px;
+  line-height: 1.2857;
+  white-space: nowrap;
+}
+.chat-page .chatSearchSublabelKey { color: var(--text-subtle); font-weight: var(--font-weight-semibold); }
+.chat-page .chatSearchSublabelValue { color: var(--text-muted); font-weight: var(--font-weight-medium); }
+.chat-page .chatSearchNameDefault { color: var(--text-default); font-weight: var(--font-weight-semibold); }
+.chat-page .chatSearchUsernameSubtle { color: var(--text-subtle); font-weight: var(--font-weight-medium); }
+.chat-page .chatSearchChannelNameContainer { align-items: center; display: flex; }
+.chat-page .chatSearchChannelName {
+  color: var(--text-strong);
+  font-weight: var(--font-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-page .chatSearchChannelNameIcon { color: var(--text-default); height: 14px; margin-inline-end: 4px; width: 14px; }
+.chat-page .chatSearchAvatar { border-radius: 50%; flex-shrink: 0; object-fit: cover; background: var(--background-mod-normal); }
+
+/* History / "Search for" pills (eC). */
+.chat-page .chatSearchPillContainer { align-items: center; display: flex; flex-shrink: 0; }
+.chat-page .chatSearchPillText { color: var(--text-strong); font-weight: var(--font-weight-semibold); }
+.chat-page .chatSearchNonText { margin-inline-end: 8px; }
+.chat-page .chatSearchFilterPill {
+  background-color: var(--background-mod-strong);
+  border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+  padding: 3px 6px;
+  padding-inline-end: 2px;
+}
+.chat-page .chatSearchAnswerPill {
+  align-items: center;
+  background-color: var(--background-mod-strong);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  display: flex;
+  gap: 4px;
+  margin-inline-end: 8px;
+  padding: 3px 6px;
+  padding-inline-start: 2px;
+  white-space: nowrap;
+}
+.chat-page .chatSearchChannelAnswerPill { gap: 0; }
+.chat-page .chatSearchChannelPillIcon { color: var(--text-default); margin-inline-end: 2px; }
+
+/* ---- calendar (calendarPicker_d27f17 .react-datepicker) ---- */
+.chat-page .chatSearchCalendar {
+  background-color: var(--background-surface-higher);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+  color: var(--text-strong);
+  display: inline-block;
+  font-family: var(--font-primary, inherit);
+  padding: 20px;
+  position: relative;
+}
+.chat-page .chatSearchCalendarHeader { position: relative; text-align: center; }
+.chat-page .chatSearchCalendarMonth {
+  border-bottom: 1px solid;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 20px;
+  margin: 0 0 10px;
+  padding: 0 0 20px;
+  text-transform: uppercase;
+}
+.chat-page .chatSearchCalendarNav {
+  background: center / 6px 12px no-repeat url(/vendor/discord/search-calendar-arrow.svg);
+  border: 1px solid var(--primary-800, #1e1f22);
+  border-radius: 2px;
+  cursor: pointer;
+  height: 18px;
+  padding: 0;
+  position: absolute;
+  top: 0;
+  width: 18px;
+}
+.chat-page .chatSearchCalendarNav.prev { inset-inline-start: 0; transform: rotate(180deg); }
+.chat-page .chatSearchCalendarNav.next { inset-inline-end: 0; }
+.chat-page .chatSearchCalendarNav:disabled { cursor: default; opacity: .3; }
+.chat-page .chatSearchCalendarDayNames { display: flex; margin-bottom: 10px; white-space: nowrap; }
+.chat-page .chatSearchCalendarDayName {
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1em;
+  text-align: center;
+  text-transform: uppercase;
+  width: 40px;
+}
+.chat-page .chatSearchCalendarWeek { display: flex; white-space: nowrap; }
+.chat-page .chatSearchCalendarDay {
+  border-inline-start: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--border-subtle);
+  box-sizing: border-box;
+  color: var(--text-strong);
+  cursor: pointer;
+  font-size: 13px;
+  height: 40px;
+  line-height: 40px;
+  position: relative;
+  text-align: center;
+  width: 40px;
+}
+.chat-page .chatSearchCalendarWeek > .chatSearchCalendarDay:last-of-type { border-inline-end: 1px solid var(--border-subtle); }
+.chat-page .chatSearchCalendarWeek:last-of-type > .chatSearchCalendarDay { border-bottom: 1px solid var(--border-subtle); }
+.chat-page .chatSearchCalendarWeek:first-of-type > .chatSearchCalendarDay:first-of-type { border-radius: 3px 0 0; }
+.chat-page .chatSearchCalendarWeek:first-of-type > .chatSearchCalendarDay:last-of-type { border-radius: 0 3px 0 0; }
+.chat-page .chatSearchCalendarWeek:last-of-type > .chatSearchCalendarDay:first-of-type { border-radius: 0 0 0 3px; }
+.chat-page .chatSearchCalendarWeek:last-of-type > .chatSearchCalendarDay:last-of-type { border-radius: 0 0 3px; }
+.chat-page .chatSearchCalendarDay.today { font-weight: 700; }
+.chat-page .chatSearchCalendarDay.outside,
+.chat-page .chatSearchCalendarDay.disabled {
+  background-color: var(--background-base-lower);
+  color: hsl(var(--primary-100-hsl, 220 9% 94%) / .3);
+  font-weight: var(--font-weight-medium);
+}
+.chat-page .chatSearchCalendarDay.disabled { cursor: default; }
+.chat-page .chatSearchCalendarDay:not(.disabled):hover {
+  background-color: var(--brand-500);
+  border-radius: 0;
+  color: var(--white);
+}
+.chat-page .chatSearchCalendarDay.selected::after {
+  background-color: var(--brand-500);
+  bottom: 0;
+  content: "";
+  height: 3px;
+  inset-inline-start: 0;
+  position: absolute;
+  width: 100%;
+}
+
+/* ---- results sidebar (searchResultsWrap_a98f3b) ---- */
+.chat-page .wrapper.searchResultsOpen { padding-inline-end: 418px; }
+.chat-page .wrapper.searchResultsOpen > .d-headerContainer { margin-inline-end: -418px; width: auto; }
+/* Absolutely-positioned overlays inside .wrapper anchor to its padding box,
+   so pull their right edge in past the sidebar. */
+.chat-page .wrapper.searchResultsOpen .jumpToPresent { right: 418px; }
+.chat-page .wrapper.searchResultsOpen > .chat-error-toast { inset-inline-end: calc(418px + var(--space-16, 16px)); }
+
+.chat-page .chatSearchResults {
+  background: var(--background-gradient-lowest, var(--background-base-lowest));
+  border-inline-start: 1px solid var(--app-frame-border, var(--border-subtle));
+  bottom: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  inset-inline-end: 0;
+  overflow: hidden;
+  position: absolute;
+  top: var(--custom-channel-header-height, 49px);
+  width: 418px;
+  z-index: 1;
+}
+.chat-page .chatSearchHeader {
+  align-items: center;
+  background: none;
+  border-bottom: 1px solid var(--border-subtle);
+  box-sizing: border-box;
+  display: flex;
+  flex-grow: 0;
+  flex-shrink: 0;
+  height: auto;
+  padding: var(--space-8) var(--space-16);
+  position: relative;
+  z-index: 2;
+}
+.chat-page .chatSearchTotalResults {
+  align-items: center;
+  display: flex;
+  flex-grow: 1;
+  font-weight: var(--font-weight-semibold);
+  min-width: 0;
+  padding-inline-end: 1px;
+}
+.chat-page .chatSearchTotalText {
+  color: var(--text-strong);
+  font-size: 16px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+.chat-page .chatSearchTotalText.searching { color: var(--text-default); }
+.chat-page .chatSearchSpinnerWrapper {
+  align-items: center;
+  display: flex;
+  flex: 0;
+  height: 16px;
+  justify-content: center;
+  margin-inline-start: 8px;
+  width: 16px;
+}
+.chat-page .chatSearchSpinner {
+  animation: chatSearchSpin .9s linear infinite;
+  border: 2px solid var(--text-default);
+  border-inline-end-color: transparent;
+  border-radius: 50%;
+  box-sizing: border-box;
+  height: 16px;
+  width: 16px;
+}
+@keyframes chatSearchSpin { to { transform: rotate(360deg); } }
+.chat-page .chatSearchModeAndFilters { align-items: center; display: flex; gap: 8px; }
+
+/* mana Button: secondary, size sm (md in the modal), primary. */
+.chat-page .chatSearchManaButton {
+  align-items: center;
+  background-color: var(--chat-search-secondary-bg);
+  border: 1px solid var(--chat-search-secondary-border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+  color: var(--chat-search-secondary-text);
+  cursor: pointer;
+  display: flex;
+  flex-grow: 0;
+  flex-shrink: 0;
+  font: inherit;
+  justify-content: center;
+  margin: 0;
+  max-width: 100%;
+  min-width: 60px;
+  padding: 0;
+  transition: background-color 50ms ease-in, color 50ms ease-in, border-color 50ms ease-in;
+}
+.chat-page .chatSearchManaButton:hover { background-color: var(--chat-search-secondary-bg-hover); transition-duration: .15s; }
+.chat-page .chatSearchManaButton:active { background-color: var(--chat-search-secondary-bg-active); }
+.chat-page .chatSearchManaButton:disabled { opacity: .5; pointer-events: none; }
+.chat-page .chatSearchManaButtonChildren {
+  align-items: center;
+  box-sizing: border-box;
+  display: flex;
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  gap: var(--space-4);
+  justify-content: center;
+  line-height: 1.2857;
+  min-height: 30px;
+  overflow: hidden;
+  padding: calc(var(--space-4) - 1px) calc(var(--space-12) - 1px);
+  white-space: nowrap;
+  width: 100%;
+}
+.chat-page .chatSearchManaButton.md { min-width: 100px; }
+.chat-page .chatSearchManaButton.md .chatSearchManaButtonChildren {
+  font-size: 16px;
+  line-height: 1.25;
+  min-height: 38px;
+  padding: calc(var(--space-8) - 1px) calc(var(--space-16) - 1px);
+}
+.chat-page .chatSearchManaButton.primary {
+  background-color: var(--control-primary-background-default, var(--brand-500));
+  border-color: transparent;
+  color: var(--control-primary-text-default, #fff);
+}
+.chat-page .chatSearchManaButton.primary:hover { background-color: var(--control-primary-background-hover, var(--brand-500)); }
+.chat-page .chatSearchManaButton.primary:active { background-color: var(--control-primary-background-active, var(--brand-500)); }
+.chat-page .chatSearchManaButton.fullWidth { width: 100%; }
+
+.chat-page .chatSearchScroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 16px 0;
+}
+.chat-page .chatSearchHelpMessage {
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  line-height: 18px;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+}
+.chat-page .chatSearchHelpMessage.warning {
+  background: hsl(38 95% 54% / .1);
+  border: 1px solid hsl(38 95% 54% / .5);
+  color: var(--text-default);
+}
+
+.chat-page .chatSearchResultGroup { list-style: none; margin: 0 0 24px; padding: 0; }
+.chat-page .chatSearchChannelNameContainerHeader {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+.chat-page .chatSearchGroupChannelIcon { color: var(--text-strong); flex-shrink: 0; padding-inline-end: 4px; }
+.chat-page .chatSearchChannelNameTextWrapper { display: flex; flex: 1 1 0; min-width: 0; overflow: hidden; }
+.chat-page .chatSearchChannelNameText {
+  color: var(--text-strong);
+  display: block;
+  font-size: 16px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-page .chatSearchChannelNameText:hover { text-decoration: underline; }
+
+.chat-page .chatSearchResultContainer { list-style: none; outline: none; position: relative; }
+.chat-page .chatSearchResult {
+  background-color: var(--background-base-lower);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-sizing: border-box;
+  cursor: pointer;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.chat-page .chatSearchResultMessage { padding: 6px 0; }
+.chat-page .chatSearchButtonsContainer {
+  display: none;
+  inset-inline-end: 8px;
+  position: absolute;
+  top: 8px;
+}
+.chat-page .chatSearchResultContainer:focus-within .chatSearchButtonsContainer,
+.chat-page .chatSearchResultContainer:hover .chatSearchButtonsContainer { display: flex; }
+.chat-page .chatSearchJumpButton {
+  background-color: var(--background-base-lowest);
+  border: 0;
+  border-radius: 3px;
+  box-sizing: border-box;
+  color: var(--text-default);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+  height: 24px;
+  line-height: 1.3333;
+  margin-inline-start: 6px;
+  padding: 4px;
+  text-align: center;
+  user-select: none;
+  z-index: 1;
+}
+.chat-page .chatSearchJumpButton:hover { color: var(--interactive-text-hover); }
+.chat-page .chatSearchJumpButton:active { color: var(--interactive-text-active); transform: translate3d(0, 1px, 0); }
+
+/* The result renders as a cozy message regardless of the chat's density. */
+.chat-page .chatSearchResults .message.chatSearchMessage {
+  background: none;
+  display: block;
+  margin: 0;
+  min-height: 2.75rem;
+  padding: .125rem 48px .125rem 72px;
+}
+.chat-page .chatSearchResults .message.chatSearchMessage:hover { background: var(--message-background-hover); }
+.chat-page .chatSearchResults .chatSearchMessage .avatar { display: block; left: 16px; top: 2px; }
+.chat-page .chatSearchResults .chatSearchMessage .message-header { display: block; line-height: 1.375rem; margin-left: 0; }
+.chat-page .chatSearchResults .chatSearchMessage .name { display: inline; float: none; font-size: 1rem; }
+.chat-page .chatSearchResults .chatSearchMessage .timestamp {
+  color: var(--chat-text-muted, var(--text-muted));
+  display: inline-block;
+  float: none;
+  font-size: 0.75rem;
+  line-height: 1.375rem;
+  margin-left: .25rem;
+  text-align: start;
+  visibility: visible;
+  width: auto;
+}
+.chat-page .chatSearchResults .chatSearchMessage .content { display: block; }
+.chat-page .chatSearchHighlight { background: var(--chat-search-highlight); }
+
+.chat-page .chatSearchEmptyResultsWrap {
+  align-items: center;
+  box-sizing: border-box;
+  color: var(--text-default);
+  display: flex;
+  flex: 1;
+  font-size: 16px;
+  font-weight: var(--font-weight-medium);
+  height: 100%;
+  justify-content: center;
+  line-height: 24px;
+  padding: 20px;
+  text-align: center;
+}
+.chat-page .chatSearchEmptyResultsContent { margin: auto; padding-bottom: 40px; position: relative; }
+.chat-page .chatSearchEmptyResultsText { font-size: 16px; font-weight: var(--font-weight-medium); margin: 40px auto 0; }
+.chat-page .chatSearchNoResults { width: 280px; }
+.chat-page .chatSearchErrorMessage { width: 300px; }
+.chat-page .chatSearchNoResultsImage,
+.chat-page .chatSearchErrorImage { height: 160px; margin: 0 auto; width: 160px; }
+.chat-page .chatSearchNoResultsImage { background-image: url(/vendor/discord/search-no-results.svg); filter: saturate(var(--saturation-factor, 1)); }
+.chat-page .chatSearchErrorImage { background-image: url(/vendor/discord/search-error.svg); }
+
+.chat-page .chatSearchPaginationDock {
+  background: none;
+  border-top: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-medium);
+  flex: 0 0 auto;
+  padding: 0 var(--space-16);
+  z-index: 2;
+}
+.chat-page .chatSearchPageControlContainer { width: 100%; }
+.chat-page .chatSearchPageControl {
+  align-items: center;
+  display: flex;
+  margin: auto;
+  padding: 4px 0;
+  width: min-content;
+}
+.chat-page .chatSearchPageButton {
+  align-items: center;
+  background: none;
+  border: 0;
+  box-sizing: border-box;
+  color: var(--text-strong);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 14px;
+  font-weight: var(--font-weight-semibold);
+  height: 28px;
+  justify-content: center;
+  margin: 4px;
+  min-width: 28px;
+  padding: 6px;
+  width: min-content;
+}
+.chat-page .chatSearchPageButton:hover:not(:disabled) { background-color: var(--background-mod-normal); color: var(--interactive-text-hover); }
+.chat-page .chatSearchPageButton:disabled { cursor: not-allowed; opacity: .5; }
+.chat-page .chatSearchRoundButton { border-radius: 14px; font-size: 16px; }
+.chat-page .chatSearchRoundButton.active,
+.chat-page .chatSearchRoundButton.active:hover { background-color: var(--brand-500); color: var(--white); cursor: default; }
+.chat-page .chatSearchEndButton { border-radius: var(--radius-xs); padding: 0 8px; white-space: nowrap; }
+.chat-page .chatSearchEndButton:first-child { padding-inline-end: 12px; }
+.chat-page .chatSearchEndButton:last-child { padding-inline-start: 12px; }
+.chat-page .chatSearchEndButtonInner { align-items: center; display: flex; }
+.chat-page .chatSearchIconCaret { display: inline-block; height: 1em; width: 1em; }
+.chat-page .chatSearchIconCaret:first-child { margin-inline-end: 4px; }
+.chat-page .chatSearchIconCaret:last-child { margin-inline-start: 4px; }
+.chat-page .chatSearchGap {
+  color: var(--text-default);
+  font-size: 16px;
+  font-weight: var(--font-weight-semibold);
+  margin: 8px 4px;
+  text-align: center;
+  width: 28px;
+}
+
+/* ---- Filters modal (mana Modal __8a031 + _e4772e) ---- */
+.chat-page .chatSearchModalLayer {
+  align-items: center;
+  background: var(--background-scrim, rgba(0, 0, 0, .7));
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 1000;
+}
+.chat-page .chatSearchModal {
+  background: var(--background-surface-high);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-high);
+  box-sizing: border-box;
+  color: var(--text-default);
+  display: flex;
+  flex-direction: column;
+  max-height: min(800px, 100%);
+  max-width: 480px;
+  width: 100%;
+}
+.chat-page .chatSearchModalHeader {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-24) var(--space-24) var(--space-8);
+}
+.chat-page .chatSearchModalTitle {
+  color: var(--text-strong);
+  font-size: 20px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
+  margin: 0;
+}
+.chat-page .chatSearchModalClose {
+  background: none;
+  border: 0;
+  color: var(--interactive-text-default);
+  cursor: pointer;
+  padding: 0;
+}
+.chat-page .chatSearchModalClose:hover { color: var(--interactive-text-hover); }
+.chat-page .chatSearchModalBody { flex: 1 1 auto; min-height: 1px; overflow-y: auto; padding: 0 var(--space-24); }
+.chat-page .chatSearchFiltersContainer { display: flex; flex-direction: column; }
+.chat-page .chatSearchFilterSection { padding-bottom: var(--space-20); }
+.chat-page .chatSearchFilterSection:first-child { padding-top: var(--space-12); }
+.chat-page .chatSearchFilterSection:last-child { padding-bottom: var(--space-12); }
+.chat-page .chatSearchLabelContainer { margin-bottom: var(--space-8); }
+.chat-page .chatSearchFieldLabel { color: var(--text-strong); font-size: 16px; font-weight: var(--font-weight-medium); line-height: 1.25; }
+.chat-page .chatSearchFieldDescription { color: var(--text-subtle); font-size: 14px; line-height: 1.2857; }
+.chat-page .chatSearchSelect { position: relative; }
+.chat-page .chatSearchSelectInput {
+  align-items: center;
+  background: var(--chat-search-input-bg);
+  border: 1px solid var(--chat-search-input-border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+  cursor: text;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 40px;
+  padding: 4px 8px;
+}
+.chat-page .chatSearchSelectInput:hover:not(:focus-within) { border-color: var(--input-border-hover, hsl(var(--opacity-24-hsl, var(--opacity-20-hsl)) / .2392)); }
+/* selectField isFocused / focus-within: 2px brand outline (discord-select.css). */
+.chat-page .chatSearchSelectInput.open,
+.chat-page .chatSearchSelectInput:focus-within { outline: 2px solid var(--input-border-active, var(--brand-500)); outline-offset: -2px; }
+.chat-page .chatSearchSelectChevron { align-self: stretch; margin-inline: auto -8px; }
+.chat-page .chatSearchSelectInput input {
+  background: none;
+  border: 0;
+  color: var(--text-default);
+  flex: 1 0 80px;
+  font: inherit;
+  font-size: 16px;
+  min-width: 80px;
+  outline: none;
+  padding: 4px 0;
+}
+.chat-page .chatSearchSelectInput input::placeholder { color: var(--chat-search-placeholder); }
+.chat-page .chatSearchSelectTag {
+  align-items: center;
+  background: var(--background-mod-normal);
+  border-radius: var(--radius-xs);
+  color: var(--text-strong);
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  gap: 4px;
+  padding: 2px 6px;
+}
+.chat-page .chatSearchSelectTag button { background: none; border: 0; color: var(--interactive-text-default); cursor: pointer; display: flex; padding: 0; }
+.chat-page .chatSearchSelectTag button:hover { color: var(--interactive-text-hover); }
+/* The From/In/Has/Mentions dropdown is the shared Discord Select listbox
+   (DiscordSelect.tsx SelectPopout + SelectListBox, discord-select.css). */
+.chat-page .chatSearchDateFilter {
+  display: grid;
+  gap: var(--space-8);
+  grid-template-columns: 120px 1fr 40px;
+  margin-bottom: var(--space-12);
+}
+.chat-page .chatSearchRemoveDateFilterButton {
+  align-items: center;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+}
+.chat-page .chatSearchTrashIcon { color: var(--text-muted); height: 24px; transition: color .2s ease; width: 24px; }
+.chat-page .chatSearchRemoveDateFilterButton:hover .chatSearchTrashIcon { color: var(--control-critical-primary-background-hover, #d83a42); }
+.chat-page .chatSearchModalActionBar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-24) var(--space-8);
+  padding: var(--space-16) var(--space-24) var(--space-24);
+}
+.chat-page .chatSearchModalActionBarLeading { flex: 1 1 auto; min-width: 0; }
+.chat-page .chatSearchModalActionBarTrailing { display: flex; flex-shrink: 0; gap: var(--space-8); margin-left: auto; }
+.chat-page .chatSearchTextButton {
+  background: none;
+  border: 0;
+  color: var(--text-link);
+  cursor: pointer;
+  font: inherit;
+  font-size: 16px;
+  font-weight: var(--font-weight-medium);
+  padding: 0;
+}
+.chat-page .chatSearchTextButton:hover:not(:disabled) { text-decoration: underline; }
+.chat-page .chatSearchTextButton:disabled { cursor: default; opacity: .5; }
+
+@media (max-width: 900px) {
+  .chat-page .wrapper.searchResultsOpen { padding-inline-end: 0; }
+  .chat-page .wrapper.searchResultsOpen > .d-headerContainer { margin-inline-end: 0; }
+  .chat-page .wrapper.searchResultsOpen .jumpToPresent { right: 0; }
+  .chat-page .wrapper.searchResultsOpen > .chat-error-toast { inset-inline-end: var(--space-16, 16px); }
+  .chat-page .chatSearchResults { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-page .chatSearchIconGlyph,
+  .chat-page .chatSearchBar { transition: none; }
+  .chat-page .chatSearchSpinner { animation-duration: 2s; }
+}

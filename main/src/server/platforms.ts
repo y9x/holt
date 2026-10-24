@@ -43,6 +43,12 @@ export interface Platform {
   allowedOrigins: readonly string[]
   links: PlatformLinks
   userState: UserStateConfig | null
+  /**
+   * The full chatbox instead of the identity shell. The chatbox calls the chat API on the page's own
+   * origin (/api/discord/bridge/*, /api/rt), so only a proxy platform whose origin serves that API can
+   * set it: abulxt, until the chat API moves into holt (docs/PLAN.md, phase 1).
+   */
+  chat: boolean
 }
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/
@@ -150,6 +156,9 @@ function parsePlatform(entry: unknown, index: number): Platform {
   })
   const links = (typeof raw.links === 'object' && raw.links !== null ? raw.links : {}) as Record<string, unknown>
   const pathLinks = secret === null && userState !== null
+  if (raw.chat !== undefined && typeof raw.chat !== 'boolean') fail(id, 'chat must be true or false')
+  const chat = raw.chat === true
+  if (chat && userState === null) fail(id, 'chat needs proxy embedding (userState): the chatbox calls the chat API on its own origin')
   return {
     id,
     name,
@@ -164,6 +173,7 @@ function parsePlatform(entry: unknown, index: number): Platform {
       signIn: linkUrl(id, 'links.signIn', links.signIn, true, pathLinks),
     },
     userState,
+    chat,
   }
 }
 

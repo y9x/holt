@@ -1,0 +1,26 @@
+.abulxt-captcha-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.abulxt-captcha-card {
+  width: min(390px, 100%);
+  display: grid;
+  gap: 10px;
+  padding: 26px;
+  border: 1px solid color-mix(in srgb, var(--theme-fg) 16%, transparent);
+  border-radius: 20px;
+  background: var(--shell-surface);
+  box-shadow: 0 24px 80px #000;
+  text-align: center;
+}
+
+.abulxt-captcha-card > strong { font-size: 17px; }
+.abulxt-captcha-card > span { color: var(--ui-text-muted); font-size: 12px; }
+.abulxt-captcha-widget { min-height: 70px; margin-top: 8px; }

@@ -30,7 +30,9 @@ if (!existsSync(ABULXT_DIR)) {
 }
 
 let differ = 0
-for (const file of [...manifest.files, ...(manifest.botShared ?? [])]) {
+const groups = Object.values(manifest).filter((value) => Array.isArray(value))
+const allFiles = groups.flat()
+for (const file of allFiles) {
   const from = resolve(ABULXT_DIR, file)
   const to = resolve(REPO_ROOT, file)
   if (!existsSync(from)) {
@@ -60,7 +62,7 @@ if (mode === '--pull') {
   const path = resolve(REPO_ROOT, 'VENDOR.md')
   const text = readFileSync(path, 'utf8').replace(/^Vendored from abulxt commit `[^`]*`/m, `Vendored from abulxt commit \`${commit}\``)
   writeFileSync(path, text)
-  console.log(`vendor-sync: pulled ${manifest.files.length + (manifest.botShared ?? []).length} files from ${ABULXT_DIR} @ ${commit.slice(0, 8)}`)
+  console.log(`vendor-sync: pulled ${allFiles.length} files from ${ABULXT_DIR} @ ${commit.slice(0, 8)}`)
   process.exit(differ ? 1 : 0)
 }
 
@@ -68,4 +70,4 @@ if (differ) {
   console.error(`vendor-sync: ${differ} file(s) out of sync with ${ABULXT_DIR}`)
   process.exit(1)
 }
-console.log(`vendor-sync: ${manifest.files.length + (manifest.botShared ?? []).length} vendored files match abulxt`)
+console.log(`vendor-sync: ${allFiles.length} vendored files match abulxt`)

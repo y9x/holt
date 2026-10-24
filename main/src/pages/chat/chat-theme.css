@@ -1,0 +1,104 @@
+/* Site theme → Discord tokens. The default Dark theme keeps Discord's exact
+   palette; every other theme remaps the big surface/text tiers onto the
+   site's theme tokens (index.css) so the chat matches the shell. Brand,
+   role and status colours are left alone. */
+
+/* Body-level overlay hosts (.chat-page.dcOverlayBody: modals, context menus,
+   pickers, select listboxes; see overlay.tsx) sit outside .workspace, so they
+   need the mapping too or they render in Discord's midnight palette. */
+html:not([data-theme="dark"]) .workspace .chat-page,
+html:not([data-theme="dark"]) .workspace .chat-page.bioMarkup,
+html:not([data-theme="dark"]) .chat-page.dcOverlayBody {
+  --background-base-lowest: var(--theme-bg);
+  --background-base-lower: var(--shell-surface);
+  --background-base-low: var(--shell-surface);
+  --background-base-higher: var(--shell-raised);
+  --background-surface-high: var(--shell-raised);
+  --background-surface-higher: var(--shell-hover);
+  --background-surface-highest: color-mix(in srgb, var(--shell-hover) 85%, var(--theme-fg));
+  --background-tertiary: var(--shell-raised);
+  --chat-background-default: var(--shell-surface);
+  --background-mod-subtle: color-mix(in srgb, var(--theme-fg) 8%, transparent);
+  --border-subtle: color-mix(in srgb, var(--theme-fg) 14%, transparent);
+  --border-muted: color-mix(in srgb, var(--theme-fg) 10%, transparent);
+  --border-normal: color-mix(in srgb, var(--theme-fg) 18%, transparent);
+  --text-default: var(--theme-fg);
+  --text-strong: var(--theme-fg);
+  --text-muted: color-mix(in srgb, var(--theme-fg) 55%, var(--theme-bg));
+  --text-subtle: color-mix(in srgb, var(--theme-fg) 68%, var(--theme-bg));
+  --interactive-text-default: color-mix(in srgb, var(--theme-fg) 68%, var(--theme-bg));
+  --interactive-text-hover: var(--theme-fg);
+  --interactive-text-active: var(--theme-fg);
+  --interactive-background-hover: color-mix(in srgb, var(--theme-fg) 8%, transparent);
+  --interactive-background-active: color-mix(in srgb, var(--theme-fg) 12%, transparent);
+  --interactive-background-selected: color-mix(in srgb, var(--theme-fg) 14%, transparent);
+  --message-background-hover: color-mix(in srgb, var(--theme-fg) 5%, transparent);
+  --input-text-default: var(--theme-fg);
+  --input-placeholder-text-default: color-mix(in srgb, var(--theme-fg) 45%, var(--theme-bg));
+  --reaction-text-default: color-mix(in srgb, var(--theme-fg) 70%, var(--theme-bg));
+  --brand-500: var(--theme-accent);
+  --brand-400: color-mix(in srgb, var(--theme-accent) 85%, var(--theme-fg));
+  --control-primary-text-default: var(--theme-on-accent);
+  color-scheme: dark;
+}
+
+html[data-scheme="light"] .workspace .chat-page,
+html[data-scheme="light"] .chat-page.dcOverlayBody {
+  color-scheme: light;
+}
+
+/* Tiers the block above doesn't cover: icons, muted chat text, channel names,
+   modals, scrollbars, input borders, brand-filled controls and the stronger
+   modifier/border steps. Still leaves role/status/danger colours alone. */
+html:not([data-theme="dark"]) .workspace .chat-page,
+html:not([data-theme="dark"]) .chat-page.dcOverlayBody {
+  --icon-strong: var(--theme-fg);
+  --icon-subtle: color-mix(in srgb, var(--theme-fg) 68%, var(--theme-bg));
+  --icon-muted: color-mix(in srgb, var(--theme-fg) 55%, var(--theme-bg));
+  --chat-text-muted: color-mix(in srgb, var(--theme-fg) 55%, var(--theme-bg));
+  --channels-default: color-mix(in srgb, var(--theme-fg) 52%, var(--theme-bg));
+  --interactive-muted: color-mix(in srgb, var(--theme-fg) 35%, var(--theme-bg));
+  --textbox-markdown-syntax: color-mix(in srgb, var(--theme-fg) 60%, var(--theme-bg));
+  --background-accent: color-mix(in srgb, var(--theme-fg) 35%, var(--theme-bg));
+  --background-mod-muted: color-mix(in srgb, var(--theme-fg) 6%, transparent);
+  --background-mod-strong: color-mix(in srgb, var(--theme-fg) 16%, transparent);
+  --border-strong: color-mix(in srgb, var(--theme-fg) 30%, transparent);
+  --input-border-default: color-mix(in srgb, var(--theme-fg) 18%, transparent);
+  --input-border-hover: color-mix(in srgb, var(--theme-fg) 26%, transparent);
+  --input-border-active: var(--theme-accent);
+  --control-secondary-background-hover: color-mix(in srgb, var(--theme-fg) 14%, transparent);
+  --control-secondary-background-active: color-mix(in srgb, var(--theme-fg) 18%, transparent);
+  --modal-background: var(--shell-raised);
+  --channeltextarea-background: var(--shell-raised);
+  --background-brand: var(--theme-accent);
+  --text-brand: var(--theme-accent);
+  --control-primary-background-default: var(--theme-accent);
+  --control-primary-background-hover: color-mix(in srgb, var(--theme-accent) 88%, var(--theme-fg));
+  --control-primary-background-active: color-mix(in srgb, var(--theme-accent) 78%, var(--theme-fg));
+  --scrollbar-thin-thumb: color-mix(in srgb, var(--theme-fg) 30%, var(--theme-bg));
+  --scrollbar-auto-thumb: color-mix(in srgb, var(--theme-fg) 30%, var(--theme-bg));
+  --scrollbar-auto-scrollbar-color-thumb: color-mix(in srgb, var(--theme-fg) 30%, var(--theme-bg));
+  --scrollbar-auto-scrollbar-color-track: var(--theme-bg);
+}
+
+/* The translucent root tint from chat-backdrop.css, in the theme's colour. */
+html:not([data-theme="dark"]) .workspace .chat-page:not(.dcOverlayBody) {
+  background: color-mix(in srgb, var(--theme-bg) 28%, transparent);
+}
+
+html:not([data-theme="dark"]) .workspace .chat-page:not(.dcOverlayBody)::before {
+  background: color-mix(in srgb, var(--theme-bg) 42%, transparent);
+}
+
+/* Composer and user panel keep their own surface tokens; map those too. */
+html:not([data-theme="dark"]) .workspace .chat-page,
+html:not([data-theme="dark"]) .chat-page.dcOverlayBody {
+  --background-gradient-highest: var(--shell-raised);
+  --input-background-default: var(--shell-raised);
+  --background-secondary-alt: var(--shell-raised);
+  --background-mod-normal: color-mix(in srgb, var(--theme-fg) 12%, transparent);
+}
+
+html:not([data-theme="dark"]) .workspace .chat-page .panels {
+  background: color-mix(in srgb, var(--theme-bg) 45%, transparent);
+}

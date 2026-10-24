@@ -1,0 +1,348 @@
+/* Discord Server Onboarding (GuildOnboardingPage, webpack 123071) — ripped
+ * from Discord's lazy chunks:
+ *   660238 main_c08b38 (page shell)         -> .dcOnbPage …
+ *   689966 coverContainer__2f300 (cover)     -> .dcOnbCover …
+ *   293403 prompt_fe70ca (question/rules)    -> .dcOnbPrompt …
+ *   455168 optionButtonWrapper__270d7 (card) -> .dcOnbOption …
+ *   a22cb0 button_a22cb0 (Mana Button)       -> .dcOnbBtn …
+ * Tokens resolve against discord-tokens.css (.chat-page, midnight theme);
+ * the few the chatbox didn't define yet are added below with Discord's
+ * .theme-midnight values. */
+
+.chat-page {
+  --modal-background: hsl(var(--neutral-96-hsl)/1);
+  --opacity-blurple-8: hsl(var(--blurple-50-hsl)/0.0784313725490196);
+  --opacity-blurple-12: hsl(var(--blurple-50-hsl)/0.12156862745098039);
+  --text-overlay-light: hsl(var(--neutral-1-hsl)/1);
+  --bg-animated-gradient-background-not-black: hsl(240 calc(var(--saturation-factor)*7.143%) 5.49%/1);
+  --control-primary-background-default: hsl(var(--blurple-50-hsl)/1);
+  --control-primary-background-hover: hsl(var(--blurple-60-hsl)/1);
+  --control-primary-background-active: hsl(var(--blurple-65-hsl)/1);
+  --control-primary-border-default: hsl(0 calc(var(--saturation-factor)*0%) 100%/0.0784313725490196);
+  --control-primary-text-default: hsl(var(--neutral-1-hsl)/1);
+  --control-secondary-background-default: hsl(var(--opacity-12-hsl)/0.12156862745098039);
+  --control-secondary-background-hover: hsl(var(--opacity-20-hsl)/0.2);
+  --control-secondary-background-active: hsl(var(--opacity-24-hsl)/0.23921568627450981);
+  --control-secondary-border-default: hsl(var(--opacity-16-hsl)/0.1607843137254902);
+  --control-secondary-text-default: hsl(var(--neutral-10-hsl)/1);
+}
+
+/* --- Typography (Discord Text/Heading variants) --- */
+.dcOnb-heading-xxl { font-family: var(--font-primary, 'gg sans', sans-serif); font-size: 32px; font-weight: 400; line-height: 1.25; margin: 0; }
+.dcOnb-heading-xl { font-family: var(--font-primary, 'gg sans', sans-serif); font-size: 24px; font-weight: 600; line-height: 1.25; margin: 0; }
+.dcOnb-heading-sm { font-family: var(--font-primary, 'gg sans', sans-serif); font-size: 14px; font-weight: 400; line-height: 1.2857142857142858; margin: 0; }
+.dcOnb-text-lg { font-family: var(--font-primary, 'gg sans', sans-serif); font-size: 20px; font-weight: 400; line-height: 1.2; }
+.dcOnb-text-md { font-family: var(--font-primary, 'gg sans', sans-serif); font-size: 16px; font-weight: 400; line-height: 1.25; }
+.dcOnb-text-md-medium { font-family: var(--font-primary, 'gg sans', sans-serif); font-size: 16px; font-weight: 500; line-height: 1.25; }
+.dcOnb-text-sm { font-family: var(--font-primary, 'gg sans', sans-serif); font-size: 14px; font-weight: 400; line-height: 1.2857142857142858; }
+.dcOnb-text-sm-medium { font-family: var(--font-primary, 'gg sans', sans-serif); font-size: 14px; font-weight: 500; line-height: 1.2857142857142858; }
+.dcOnb-text-xs { font-family: var(--font-primary, 'gg sans', sans-serif); font-size: 12px; font-weight: 400; line-height: 1.3333333333333333; }
+.dcOnb-c-strong { color: var(--text-strong); }
+.dcOnb-c-default { color: var(--text-default); }
+.dcOnb-c-muted { color: var(--text-muted); }
+.dcOnb-c-brand { color: var(--text-brand); }
+.dcOnb-c-overlay { color: var(--text-overlay-light); }
+
+/* --- Page shell (660238 main_c08b38) --- */
+.dcOnbPage {
+  position: absolute;
+  inset: 0;
+  z-index: 300;
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  padding: 80px 0;
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--background-base-lowest, #000);
+  -webkit-user-select: text;
+  user-select: text;
+}
+.dcOnbPage.fullBorderWithGradient {
+  background-color: var(--bg-animated-gradient-background-not-black);
+  border-radius: var(--radius-lg, 12px);
+}
+.dcOnbArtwork { position: absolute; inset-inline-start: 0; top: 0; height: 100%; width: 100%; }
+.dcOnbArtwork img { width: 100%; height: 100%; -o-object-fit: cover; object-fit: cover; display: block; }
+.dcOnbGradient {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(180deg, hsl(var(--primary-800-hsl, 240 7% 10%)/.5) 0, hsl(var(--primary-800-hsl, 240 7% 10%)/1) 100%);
+}
+.dcOnbStage { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+.dcOnbBottomCenter {
+  align-items: center;
+  bottom: 16px;
+  display: flex;
+  position: absolute;
+  text-align: center;
+  z-index: 1;
+}
+.dcOnbPrivacy a, .dcOnbPrivacy button.dcOnbLink {
+  color: var(--text-default);
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.dcOnbClose {
+  position: absolute;
+  top: 16px;
+  inset-inline-end: 16px;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--interactive-text-default, var(--text-muted));
+  background: var(--control-secondary-background-default);
+  cursor: pointer;
+}
+.dcOnbClose:hover { color: var(--interactive-text-hover, var(--text-strong)); background: var(--control-secondary-background-hover); }
+
+/* Step transition: Discord springs each step in from scale .8 / opacity 0. */
+.dcOnbStepIn { animation: dcOnbStepIn 0.32s cubic-bezier(.2, .9, .3, 1.15) both; }
+@keyframes dcOnbStepIn { from { opacity: 0; transform: scale(.8); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .dcOnbStepIn { animation: none; } }
+
+/* --- Cover (689966) --- */
+.dcOnbCover {
+  align-items: center;
+  border-radius: 12px;
+  box-sizing: border-box;
+  display: flex;
+  height: min(640px, 90vh);
+  justify-content: center;
+  padding: 0 24px;
+  position: relative;
+}
+.dcOnbCoverCenter {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  justify-content: center;
+  z-index: 1;
+}
+.dcOnbCoverContent { max-width: 500px; padding: 24px; text-align: center; }
+.dcOnbCoverTitle { margin-bottom: var(--space-16, 16px); opacity: 1; }
+.dcOnbGuildImage { border-radius: 42px; width: 128px; height: 128px; display: block; object-fit: cover; }
+.dcOnbGuildAcronym {
+  border-radius: 42px;
+  width: 128px;
+  height: 128px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--background-surface-high);
+  color: var(--text-strong);
+  font-size: 40px;
+  font-weight: 500;
+}
+
+/* --- Question / rules step (293403 prompt_fe70ca) --- */
+.dcOnbPrompt {
+  background-color: var(--modal-background);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  height: min(640px, 90vh);
+  max-width: 800px;
+  width: min(800px, 90vw);
+  position: relative;
+  z-index: 1;
+}
+.dcOnbPromptContent { display: flex; flex-direction: column; height: 100%; position: relative; min-height: 0; }
+.dcOnbScrollerContent {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: clamp(24px, 8vh, 80px) clamp(24px, 10vw, 100px) clamp(16px, 5vh, 40px);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-auto-thumb, #1a1b1e) transparent;
+}
+.dcOnbScrollerContent::-webkit-scrollbar { width: 8px; }
+.dcOnbScrollerContent::-webkit-scrollbar-thumb { background: var(--scrollbar-auto-thumb); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
+.dcOnbQuestionHeader { align-items: center; display: flex; }
+.dcOnbTitle { margin-bottom: 24px; margin-top: 8px; }
+.dcOnbHeaderSeparator {
+  align-self: center;
+  background-color: var(--border-subtle);
+  border-radius: 4px;
+  color: var(--border-subtle);
+  flex-shrink: 0;
+  height: 4px;
+  margin: 0 8px;
+  width: 4px;
+  overflow: hidden;
+}
+.dcOnbPromptOptions {
+  display: grid;
+  gap: 12px;
+  grid-auto-rows: 1fr;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 24px;
+}
+@media screen and (max-width: 560px) { .dcOnbPromptOptions { grid-template-columns: 1fr; } }
+.dcOnbSelectValuePill { background-color: var(--background-base-low); border-radius: 4px; margin-inline-end: 8px; padding: 4px 8px; display: inline-flex; align-items: center; gap: 6px; }
+.dcOnbHelpText { align-self: center; flex-wrap: wrap; margin-inline-start: 12px; max-width: 300px; text-align: end; }
+.dcOnbHelpTextItem { color: var(--interactive-text-active); }
+.dcOnbNavButtons {
+  align-items: center;
+  background-color: var(--background-base-lower);
+  border-end-end-radius: 12px;
+  border-end-start-radius: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 20px;
+}
+.dcOnbTermsFieldBody { background-color: var(--background-base-lower); border-radius: 12px; margin-top: 32px; padding: 0 16px; }
+.dcOnbTermsRow { align-items: flex-start; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: row; gap: 8px; padding: 16px 0; }
+.dcOnbTermsRow:last-child { border-bottom: none; }
+.dcOnbTermsRowContent { padding-inline-start: 8px; color: var(--text-default); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dcOnbLeftButtons, .dcOnbRightButtons { align-items: center; display: flex; gap: 16px; }
+.dcOnbOverlay {
+  background: linear-gradient(to top, var(--modal-background), transparent);
+  bottom: 78px;
+  height: 80px;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+}
+
+/* --- Option card (455168 optionButtonWrapper__270d7) --- */
+.dcOnbOption {
+  align-items: center;
+  background-color: var(--background-mod-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  display: flex;
+  position: relative;
+}
+.dcOnbOption:hover { background-color: var(--background-mod-subtle); border-color: var(--border-muted); }
+.dcOnbOption.selected { background-color: var(--opacity-blurple-8); border-color: var(--background-brand); }
+.dcOnbOption.selected.pressed { background-color: var(--opacity-blurple-12); }
+.dcOnbOption.pressed { background-color: var(--background-mod-normal); transform: none; }
+.dcOnbOptionButton {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  flex-grow: 1;
+  padding: 12px 16px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: start;
+  font: inherit;
+  border-radius: 12px;
+  transition: all .2s ease-in-out;
+}
+.dcOnbOptionButton:focus-visible { outline: 2px solid var(--focus-primary, hsl(var(--blurple-50-hsl)/1)); outline-offset: 2px; }
+.dcOnbCheckIcon {
+  align-items: center;
+  background-color: var(--brand-500);
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: flex;
+  height: 20px;
+  inset-inline-end: -10px;
+  justify-content: center;
+  position: absolute;
+  top: -10px;
+  width: 20px;
+  opacity: 0;
+  transform: scale(.7);
+  transition: opacity .15s, transform .15s;
+}
+.dcOnbOption.selected .dcOnbCheckIcon { opacity: 1; transform: scale(1); }
+.dcOnbButtonEmoji { align-self: center; margin-inline-end: 12px; width: 1.375em; height: 1.375em; object-fit: contain; flex-shrink: 0; }
+.dcOnbButtonEmojiText { align-self: center; margin-inline-end: 12px; font-size: 1.375em; line-height: 1; flex-shrink: 0; }
+.dcOnbButtonText { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+
+/* --- Dropdown prompt (Discord's searchable multi-select) --- */
+/* Dropdown prompt: the shared Discord Select (DiscordSelect.tsx /
+   discord-select.css) — only the onboarding spacing + answer pills here. */
+.dcOnbSelect { position: relative; margin-bottom: 24px; }
+.chat-page .dcOnbSelect .dcOnbSelectValues { gap: 4px 0; padding-block: 6px; }
+
+/* --- Mana Button (a22cb0) --- */
+.dcOnbBtn {
+  align-items: center;
+  background: initial;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 8px);
+  box-sizing: border-box;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-grow: 0;
+  flex-shrink: 0;
+  font-size: medium;
+  font-weight: 400;
+  justify-content: center;
+  margin: 0;
+  max-height: min-content;
+  max-width: 100%;
+  padding: 0;
+  position: relative;
+  text-align: start;
+  transition: background-color 50ms ease-in, color 50ms ease-in, border-color 50ms ease-in, opacity 50ms ease-in;
+  width: min-content;
+}
+.dcOnbBtn:hover { transition: background-color .15s ease-out, color .15s ease-out, border-color .15s ease-out, opacity .15s ease-out; }
+.dcOnbBtn:disabled { opacity: .5; cursor: not-allowed; }
+.dcOnbBtnWrapper { align-items: center; border-radius: var(--radius-sm, 8px); box-sizing: border-box; display: flex; justify-content: center; overflow: hidden; position: relative; width: 100%; min-height: 38px; min-width: 38px; }
+.dcOnbBtn.hasText { min-width: 100px; }
+.dcOnbBtn.hasText .dcOnbBtnWrapper { padding: 7px 15px; }
+.dcOnbBtnChildren { align-items: center; display: flex; gap: var(--space-4, 4px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: opacity .2s ease-out, transform .2s ease-out; }
+.dcOnbBtnChildren.loading { opacity: 0; transform: translateY(-100%); }
+.dcOnbBtnIcon { flex-shrink: 0; }
+.dcOnbBtnSpinner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 4px; }
+.dcOnbBtnSpinner span { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: dcOnbPulse 1.4s ease-in-out infinite; }
+.dcOnbBtnSpinner span:nth-child(2) { animation-delay: .2s; }
+.dcOnbBtnSpinner span:nth-child(3) { animation-delay: .4s; }
+@keyframes dcOnbPulse { 0%, 80%, 100% { opacity: .3; transform: scale(.8); } 40% { opacity: 1; transform: scale(1); } }
+.dcOnbBtn.primary { background-color: var(--control-primary-background-default); border-color: var(--control-primary-border-default); color: var(--control-primary-text-default); }
+.dcOnbBtn.primary:hover:not(:disabled) { background-color: var(--control-primary-background-hover); }
+.dcOnbBtn.primary:active:not(:disabled) { background-color: var(--control-primary-background-active); }
+.dcOnbBtn.secondary { background-color: var(--control-secondary-background-default); border-color: var(--control-secondary-border-default); color: var(--control-secondary-text-default); }
+.dcOnbBtn.secondary:hover:not(:disabled) { background-color: var(--control-secondary-background-hover); }
+.dcOnbBtn.secondary:active:not(:disabled) { background-color: var(--control-secondary-background-active); }
+
+/* Tooltip on the disabled "required" button (Discord TooltipContainer). */
+.dcOnbTooltipWrap { position: relative; display: inline-flex; }
+.dcOnbTooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .1s;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--background-surface-highest, #2b2d31);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-high, 0 8px 16px rgba(0,0,0,.24));
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 16px;
+  z-index: 3;
+}
+.dcOnbTooltipWrap:hover .dcOnbTooltip { opacity: 1; }

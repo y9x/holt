@@ -1,0 +1,236 @@
+/* Server-tag popout — Discord's GuildProfile card, verbatim from the live CSS
+   modules: container_d3846c (popout), container, banner, avatar-, body,
+   buttonContainer_dca174 (card), *__6e500 (header), *_a2b4d3 (traits),
+   *__4e338 (games), *_d28ae0 (guild icon), wanderingCubes__46696 (spinner).
+   Text variants: heading-md/semibold (16px/1.25 600), heading-lg/medium
+   (20px/1.2 500), text-sm/normal (14px/1.2857 400). */
+
+.chat-page .chat-gtPopout {
+  border-radius: 16px;
+  box-shadow: var(--shadow-border), var(--shadow-high);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  width: 300px;
+  font-family: var(--font-primary, inherit);
+  text-align: start;
+}
+
+.chat-page .chat-gtSpinnerContainer {
+  background: var(--background-surface-highest);
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.chat-page .chat-gtCard {
+  align-items: flex-start;
+  background: var(--background-surface-highest);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-page .chat-gtBanner { height: 120px; width: 100%; flex-shrink: 0; }
+
+.chat-page .chat-gtAvatarContainer {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: -34px;
+  padding: 0 16px;
+}
+
+/* 70px wrapper + 64px icon, both under the CLAN_ICON mask (rect rx/ry .3 in
+   objectBoundingBox units → a 30% corner radius). */
+.chat-page .chat-gtAvatarWrapper {
+  align-items: center;
+  background: var(--background-surface-highest);
+  border-radius: 30%;
+  display: flex;
+  height: 70px;
+  justify-content: center;
+  width: 70px;
+}
+
+.chat-page .chat-gtIcon {
+  border-radius: 30%;
+  display: block;
+  height: 64px;
+  object-fit: cover;
+  width: 64px;
+}
+
+.chat-page .chat-gtAcronym {
+  align-items: center;
+  background-color: var(--background-base-lowest);
+  color: var(--text-strong);
+  display: flex;
+  font-size: 22px;
+  font-weight: 500;
+  justify-content: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.chat-page .chat-gtHeader,
+.chat-page .chat-gtCardHeader {
+  align-items: flex-start;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 8px;
+  margin-top: 8px;
+  padding: 0 16px;
+  width: 100%;
+}
+
+.chat-page .chat-gtNameContainer {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.chat-page .chat-gtGuildName {
+  color: var(--text-strong);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-page .chat-gtHeadingLg {
+  color: var(--text-strong);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.chat-page .chat-gtGuildBadge { flex-shrink: 0; display: flex; }
+.chat-page .chat-gtGuildBadge:empty { display: none; }
+.chat-page .chat-gtServerTag { flex-shrink: 0; }
+
+.chat-page .chat-gtText {
+  color: var(--text-subtle);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.2857142857142858;
+}
+
+.chat-page .chat-gtMembers { display: flex; flex-wrap: wrap; gap: 0 8px; }
+.chat-page .chat-gtMemberCount { align-items: center; display: flex; gap: 4px; }
+.chat-page .chat-gtDot {
+  background: var(--text-status-offline, #82838b);
+  border-radius: 50%;
+  height: 8px;
+  width: 8px;
+}
+.chat-page .chat-gtDot.chat-gtDotOnline { background: var(--text-status-online, hsl(var(--green-new-40-hsl, 141.649 44.292% 42.941%) / 1)); }
+.chat-page .chat-gtEstablished { display: flex; }
+
+.chat-page .chat-gtBody {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+  padding: 0 16px;
+  width: 100%;
+}
+
+.chat-page .chat-gtEmptyBody { height: 8px; }
+
+.chat-page .chat-gtButtonContainer {
+  box-sizing: border-box;
+  display: flex;
+  padding: 0 16px 16px;
+  width: 100%;
+}
+
+/* Mana Button variant "active" (control-connected green), size sm, fullWidth. */
+.chat-page .manaButton.manaActive {
+  background-color: var(--control-connected-background-default);
+  border-color: var(--control-connected-border-default, hsl(0 0% 100% / 0.0784));
+  color: var(--control-connected-text-default, var(--white));
+  text-decoration: none;
+}
+.chat-page .manaButton.manaActive:hover { background-color: var(--control-connected-background-hover); }
+.chat-page .manaButton.manaActive:active { background-color: var(--control-connected-background-active); }
+.chat-page .chat-gtCta { width: 100%; }
+
+.chat-page .chat-gtError {
+  align-items: center;
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--text-feedback-warning, #fbb848);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 14px;
+  gap: 4px;
+  margin: 8px 0 8px;
+  padding: 0;
+}
+
+/* Games (container__4e338 / gameIcon__4e338). */
+.chat-page .chat-gtGames { display: flex; gap: 4px; flex-wrap: wrap; }
+.chat-page .chat-gtGameIcon { position: relative; width: 24px; height: 24px; }
+.chat-page .chat-gtGameIconImage { width: 24px; height: 24px; border-radius: 6px; display: block; }
+
+/* Traits (container/trait/traitEmoji/ellipsize_a2b4d3). */
+.chat-page .chat-gtTraits { display: flex; flex-wrap: wrap; gap: 4px; }
+.chat-page .chat-gtTrait {
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  display: flex;
+  gap: 4px;
+  max-width: 268px;
+  padding: 4px 8px;
+  transition: border-color .2s ease;
+}
+.chat-page .chat-gtTrait:hover { border-color: var(--border-strong, var(--border-normal)); }
+.chat-page .chat-gtTraitEmoji { height: 16px; width: 16px; object-fit: contain; }
+.chat-page .chat-gtTraitEmojiText { font-size: 14px; line-height: 16px; }
+.chat-page .chat-gtTraitLabel {
+  color: var(--text-default);
+  font-size: 14px;
+  line-height: 1.2857142857142858;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Spinner (wanderingCubes__46696). */
+.chat-page .chat-gtSpinner { display: flex; align-items: center; justify-content: center; }
+.chat-page .chat-gtSpinnerInner { position: relative; width: 32px; height: 32px; display: inline-block; }
+.chat-page .chat-gtSpinnerItem {
+  animation: chat-gt-wandering-cubes 1.8s ease-in-out infinite;
+  background-color: var(--brand-400);
+  height: 10px;
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: 10px;
+}
+.chat-page .chat-gtSpinnerItem:last-child { animation-delay: -.9s; }
+@keyframes chat-gt-wandering-cubes {
+  25% { transform: translateX(22px) rotate(-90deg) scale(.5); }
+  50% { transform: translateX(22px) translateY(22px) rotate(-180deg); }
+  75% { transform: translateX(0) translateY(22px) rotate(-270deg) scale(.5); }
+  to { transform: rotate(-1turn); }
+}
+
+/* Clickable chiplet (clickable__10651): pointer + mod-muted hover. */
+.chat-page .chat-chipletInner.chat-chipletClickable { cursor: pointer; transition: background .1s ease-in-out; }
+.chat-page .chat-chipletInner.chat-chipletClickable:hover { background: var(--background-mod-muted); }

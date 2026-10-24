@@ -1,0 +1,202 @@
+/* Discord's Select (DiscordSelect.tsx) — values from Discord's own CSS:
+     wrapper__72c38 (input wrapper) + selectField/selectButton/chevron__0edde
+       → .dcSelectField / .dcSelectValue / .dcSelectChevron
+     selectDropdown__0edde → .dcSelectDropdown
+     listBox/listBoxItem/listBoxItemContent/selectedIcon__2e223 → .dcListBox …
+   The dropdown is portaled into the select layer (overlay.tsx), which carries
+   the chat-page class, so `.chat-page` scoping still applies there. */
+
+.chat-page .dcSelect { position: relative; min-width: 0; }
+
+/* --- field --- */
+.chat-page .dcSelectField {
+  --dc-select-border: var(--input-border-default, hsl(var(--opacity-20-hsl) / .2));
+  --dc-select-border-hover: var(--input-border-hover, hsl(var(--opacity-24-hsl, var(--opacity-20-hsl)) / .2392));
+  align-items: stretch;
+  background-color: var(--input-background-default, hsl(0 0% 0% / .1216));
+  border: 1px solid var(--dc-select-border);
+  border-radius: var(--radius-sm, 8px);
+  box-sizing: border-box;
+  color: var(--input-text-default, var(--text-strong));
+  cursor: pointer;
+  display: grid;
+  font-size: 16px;
+  font-weight: 400;
+  gap: 0;
+  grid-template-columns: 1fr auto;
+  line-height: 20px;
+  min-height: 40px;
+  outline: none;
+  text-align: start;
+  transition: border-color .1s ease;
+  user-select: none;
+  width: 100%;
+}
+.chat-page .dcSelectField:not(.isDisabled):not(:focus-within):hover { border-color: var(--dc-select-border-hover); }
+.chat-page .dcSelectField:not(.isDisabled).isOpen,
+.chat-page .dcSelectField:not(.isDisabled):focus-visible {
+  outline: 2px solid var(--input-border-active, var(--brand-500));
+  outline-offset: -2px;
+}
+.chat-page .dcSelectField.isDisabled { cursor: not-allowed; opacity: .5; }
+.chat-page .dcSelectValue {
+  align-items: center;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 4px 4px 12px;
+}
+.chat-page .dcSelectPlaceholder {
+  color: var(--input-placeholder-text-default, var(--text-muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-page .dcSelectSingleValue { align-items: center; display: flex; gap: 8px; min-width: 0; }
+.chat-page .dcSelectValueText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-page .dcSelectChevron {
+  align-items: center;
+  color: var(--icon-strong, var(--interactive-text-default));
+  display: flex;
+  justify-content: center;
+  padding-inline-end: 4px;
+  width: 36px;
+  box-sizing: border-box;
+}
+.chat-page .dcSelectChevronIcon { display: block; height: 20px; transform: rotateX(0deg); transition: transform .2s ease-out; width: 20px; }
+.chat-page .dcSelectChevronIcon.isOpen { transform: rotateX(180deg); }
+.chat-page .dcSelectChevronIcon svg { display: block; }
+
+/* --- dropdown --- */
+.chat-page .dcSelectDropdown {
+  animation: dcSelectEnter .1s ease-out;
+  background-color: var(--background-surface-higher);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm, 8px);
+  box-shadow: 0 2px 8px 0 hsl(0 0% 0% / .1608);
+  box-sizing: border-box;
+  color: var(--text-strong);
+  font-size: 16px;
+  line-height: 20px;
+  overflow: hidden;
+  transform-origin: top center;
+}
+.chat-page .dcSelectDropdown[data-popout-position="top"] { transform-origin: bottom center; }
+@keyframes dcSelectEnter {
+  from { opacity: .5; transform: scaleY(.96); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-page .dcSelectDropdown { animation: none; }
+  .chat-page .dcSelectChevronIcon { transition: none; }
+}
+
+/* --- listbox --- */
+.chat-page .dcListBox {
+  box-sizing: border-box;
+  outline: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  scrollbar-color: var(--scrollbar-thin-thumb, hsl(var(--opacity-20-hsl) / .2)) transparent;
+  scrollbar-width: thin;
+}
+.chat-page .dcListBox:not(.scrollable) { scrollbar-width: none; }
+.chat-page .dcListBox:not(.scrollable)::-webkit-scrollbar { height: 0; width: 0; }
+.chat-page .dcListBoxEmpty {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  font-size: 16px;
+  font-weight: var(--font-weight-medium, 500);
+  justify-content: center;
+  min-height: 40px;
+}
+.chat-page .dcListBoxItem {
+  align-items: stretch;
+  background-color: transparent;
+  border-radius: var(--radius-xs, 4px);
+  box-sizing: border-box;
+  color: var(--text-strong);
+  cursor: pointer;
+  display: flex;
+  justify-content: flex-start;
+  transition: background-color 50ms ease-in;
+}
+.chat-page .dcListBoxItem[data-active="true"]:not([aria-disabled="true"]) {
+  background-color: var(--background-mod-normal);
+  transition: background-color .15s ease-out;
+}
+.chat-page .dcListBoxItem[aria-disabled="true"] { cursor: not-allowed; opacity: .5; }
+.chat-page .dcListBoxItemContent {
+  align-items: center;
+  box-sizing: border-box;
+  color: var(--text-strong);
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  min-height: 40px;
+  min-width: 0;
+  padding: 3px 4px 3px 8px;
+}
+.chat-page .dcListBoxItemContent[data-has-description="true"] { min-height: 44px; }
+.chat-page .dcListBoxItemLeading { align-items: center; display: flex; flex-shrink: 0; }
+.chat-page .dcListBoxItemText { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.chat-page .dcListBoxItemLabel {
+  font-size: 16px;
+  font-weight: var(--font-weight-medium, 500);
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-page .dcListBoxItemDescription {
+  color: var(--text-subtle);
+  font-size: 14px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-page .dcListBoxItemTrailing { color: var(--text-subtle); flex-shrink: 0; font-size: 14px; }
+.chat-page .dcListBoxSelectedIcon {
+  align-items: center;
+  box-sizing: border-box;
+  display: flex;
+  flex-shrink: 0;
+  justify-content: center;
+  min-width: 24px;
+  padding: 4px;
+}
+.chat-page .dcListBoxCheckbox {
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-sizing: border-box;
+  color: var(--white);
+  display: flex;
+  height: 20px;
+  justify-content: center;
+  width: 20px;
+}
+.chat-page .dcListBoxCheckbox.checked { background: var(--brand-500); border-color: var(--brand-500); }
+
+/* --- date field (search Filters) --- */
+.chat-page .dcDateFieldIcon {
+  align-items: center;
+  color: var(--icon-strong, var(--interactive-text-default));
+  display: flex;
+  justify-content: center;
+  padding-inline-end: 8px;
+  width: 36px;
+  box-sizing: border-box;
+}
+.chat-page .dcSelectDropdown.dcDatePopout {
+  background: none;
+  border: 0;
+  box-shadow: var(--shadow-high);
+  overflow: visible;
+}

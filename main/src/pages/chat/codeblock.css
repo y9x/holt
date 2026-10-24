@@ -1,0 +1,288 @@
+/* Discord message markup (markdown.ts output), ported 1:1 from the live
+   client's CSS:
+     - markup rules: chunk 457428 (.markup__75297 …, .blockquoteContainer,
+       .timestamp__75297, codeContainer / codeActions)
+     - code-block scrollbar: 411938 (.scrollbarGhostHairline_da3286)
+     - highlight.js theme + ANSI: 189281 (.hljs, .hljs-*, .hljs-ansi-*)
+     - token values: the .theme-midnight block of the theme chunk (the live
+       client runs <html class="theme-dark theme-midnight">; midnight is
+       declared after dark and wins), ramps resolved to their HSL channels.
+   "M" below is the markup root: message content (.content, which also covers
+   component text displays) and embed markup (.dcEmbedMarkup). */
+
+/* gg mono — Discord's --font-code face (ripped from Discord's CDN, served from
+   main/public/fonts like gg sans). */
+@font-face {
+  font-family: 'gg mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ggmono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'gg mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/ggmono-700.woff2') format('woff2');
+}
+
+.chat-page, .bioMarkup {
+  --font-code: "gg mono", "Source Code Pro", Consolas, "Andale Mono WT", "Andale Mono", "Lucida Console", "Lucida Sans Typewriter", "DejaVu Sans Mono", "Bitstream Vera Sans Mono", "Liberation Mono", "Nimbus Mono L", Monaco, "Courier New", Courier, monospace;
+
+  /* .theme-midnight code tokens */
+  --text-code: hsl(228 calc(var(--saturation-factor, 1)*4.854%) 79.804%);            /* neutral-15 */
+  --text-code-variable: hsl(228 calc(var(--saturation-factor, 1)*4.854%) 79.804%);   /* neutral-15 */
+  --text-code-keyword: hsl(1.385 calc(var(--saturation-factor, 1)*87.838%) 70.98%);  /* red-new-30 */
+  --text-code-section: hsl(1.385 calc(var(--saturation-factor, 1)*87.838%) 70.98%);  /* red-new-30 */
+  --text-code-deletion: hsl(1.385 calc(var(--saturation-factor, 1)*87.838%) 70.98%); /* red-new-30 */
+  --text-code-error: hsl(1.385 calc(var(--saturation-factor, 1)*87.838%) 70.98%);    /* red-new-30 */
+  --text-code-operator: hsl(2 calc(var(--saturation-factor, 1)*95.238%) 75.294%);    /* red-new-25 */
+  --text-code-type: hsl(315.181 calc(var(--saturation-factor, 1)*100%) 67.451%);     /* pink-46 */
+  --text-code-tag: hsl(315.181 calc(var(--saturation-factor, 1)*100%) 67.451%);      /* pink-46 */
+  --text-code-escape: hsl(315.181 calc(var(--saturation-factor, 1)*100%) 67.451%);   /* pink-46 */
+  --text-code-title: hsl(230.164 calc(var(--saturation-factor, 1)*93.846%) 74.51%);  /* blurple-33 */
+  --text-code-attribute: hsl(213.061 calc(var(--saturation-factor, 1)*84%) 65.686%); /* blue-new-33 */
+  --text-code-bullet: hsl(213.061 calc(var(--saturation-factor, 1)*84%) 65.686%);    /* blue-new-33 */
+  --text-code-link: hsl(213.061 calc(var(--saturation-factor, 1)*84%) 65.686%);      /* blue-new-33 */
+  --text-code-namespace: hsl(213.061 calc(var(--saturation-factor, 1)*84%) 65.686%); /* blue-new-33 */
+  --text-code-builtin: hsl(38.455 calc(var(--saturation-factor, 1)*100%) 43.137%);   /* yellow-new-56 */
+  --text-code-decorator: hsl(38.455 calc(var(--saturation-factor, 1)*100%) 43.137%); /* yellow-new-56 */
+  --text-code-property: hsl(185.156 calc(var(--saturation-factor, 1)*54.237%) 46.275%); /* teal-new-34 */
+  --text-code-number: hsl(22.238 calc(var(--saturation-factor, 1)*70.443%) 60.196%); /* orange-new-31 */
+  --text-code-string: hsl(139.773 calc(var(--saturation-factor, 1)*35.484%) 51.373%); /* green-new-33 */
+  --text-code-regexp: hsl(139.773 calc(var(--saturation-factor, 1)*35.484%) 51.373%); /* green-new-33 */
+  --text-code-addition: hsl(139.31 calc(var(--saturation-factor, 1)*36.1%) 52.745%); /* green-new-32 */
+  --text-code-comment: hsl(233.333 calc(var(--saturation-factor, 1)*3.93%) 55.098%); /* neutral-33 */
+  --background-code-addition: hsl(151.128 calc(var(--saturation-factor, 1)*100%) 26.078% / 0.12156862745098039);   /* opacity-green-12 */
+  --background-code-deletion: hsl(355.636 calc(var(--saturation-factor, 1)*64.706%) 50% / 0.12156862745098039);    /* opacity-red-12 */
+
+  /* .theme-midnight ANSI palette */
+  --ansi-black: hsl(0 0% 0%);                                                        /* black */
+  --ansi-red: hsl(355.472 calc(var(--saturation-factor, 1)*64.898%) 48.039%);        /* red-new-52 */
+  --ansi-green: hsl(150.984 calc(var(--saturation-factor, 1)*98.387%) 24.314%);      /* green-new-54 */
+  --ansi-yellow: hsl(34.395 calc(var(--saturation-factor, 1)*100%) 30.784%);         /* yellow-new-70 */
+  --ansi-blue: hsl(209.4 calc(var(--saturation-factor, 1)*98.039%) 40%);             /* blue-new-55 */
+  --ansi-magenta: hsl(315.573 calc(var(--saturation-factor, 1)*55.745%) 46.078%);    /* pink-64 */
+  --ansi-cyan: hsl(184.724 calc(var(--saturation-factor, 1)*100%) 24.902%);          /* teal-new-56 */
+  --ansi-white: hsl(230 calc(var(--saturation-factor, 1)*4.286%) 72.549%);           /* neutral-20 */
+}
+
+/* --- Discord's element reset, limited to the markup elements we emit ------ */
+/* Zero-specificity tail (:where) so it ranks like Discord's bare-element
+   reset — .hljs padding and every markup rule below still win over it. */
+:where(.chat-page :where(.content, .dcEmbedMarkup), .bioMarkup) :where(pre, code, blockquote, ul, ol, li, h1, h2, h3, small, strong, em, s, u, p) {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  font-size: 100%;
+  font-style: inherit;
+  font-weight: inherit;
+  vertical-align: baseline;
+}
+:where(.chat-page :where(.content, .dcEmbedMarkup), .bioMarkup) code {
+  font-family: var(--font-code);
+}
+
+/* Bio text (BioText) is markup without a .content ancestor. The app's root font
+   (JetBrains Mono) ships no italic face and :root sets font-synthesis:none, so
+   <em> rendered upright; the bio uses gg sans (italic face in chat.css). */
+.bioMarkup { font-family: 'gg sans', 'Noto Sans', sans-serif; }
+
+/* --- .markup__75297 --------------------------------------------------------- */
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) strong { font-weight: var(--font-weight-bold); }
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) em { font-style: italic; }
+
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) pre {
+  background-clip: border-box;
+  border-radius: 4px;
+  font-family: var(--font-code);
+  font-size: .75rem;
+  line-height: 1rem;
+  margin-top: 6px;
+  padding: 0;
+  white-space: pre-wrap;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) :is(blockquote, pre) {
+  box-sizing: border-box;
+  max-width: 90%;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) blockquote {
+  color: var(--text-subtle);
+  text-indent: 0;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) blockquote pre { max-width: 100%; }
+
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) small {
+  color: var(--text-subtle);
+  display: block;
+  font-size: .875rem;
+  line-height: 1.20313rem;
+}
+
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) code {
+  background: var(--background-code);
+  border: 1px solid var(--border-normal);
+  font-size: .875rem;
+  line-height: 1.125rem;
+  text-indent: 0;
+  white-space: pre-wrap;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) code.inline {
+  border-radius: 4px;
+  font-family: var(--font-code);
+  font-size: 85%;
+  height: auto;
+  margin: -.2em 0;
+  padding: 0 .2em;
+  text-indent: 0;
+  white-space: pre-wrap;
+  width: auto;
+}
+
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) .codeContainer {
+  max-width: 50vw;
+  position: relative;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) .codeActions {
+  display: none;
+  inset-inline-end: 4px;
+  position: absolute;
+  top: 8px;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) .codeContainer:hover .codeActions { display: block; }
+/* The copy control is Discord's unstyled Clickable div; the icon inherits the
+   markup color and the 16px svg sits on its own line box. */
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) .codeCopyButton svg { display: block; }
+
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) li {
+  margin-bottom: 4px;
+  white-space: break-spaces;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) :is(ol, ul) {
+  list-style-position: outside;
+  margin-block: 4px 0;
+  margin-inline: 16px 0;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) ul { list-style-type: disc; }
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) ol {
+  list-style-type: decimal;
+  margin-inline-start: calc(.4em + var(--totalCharacters)*.6em);
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) :is(ol, ul) ul {
+  list-style-type: circle;
+  margin-bottom: 0;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) :is(ol, ul) ol { margin-bottom: 0; }
+
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) :is(h1, h2, h3) {
+  color: var(--custom-message-content-color, var(--text-strong));
+  font-family: var(--font-primary);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.375em;
+  margin: 16px 0 4px;
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) h1 { font-size: 1.5rem; margin: 16px 0 8px; }
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) h2 { font-size: 1.25rem; margin: 16px 0 8px; }
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) h3 { font-size: 1rem; margin: 16px 0 8px; }
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) :is(h1, h2):first-child { margin-top: 8px; }
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) h3:first-child { margin-top: 4px; }
+
+/* --- block quote (blockquoteContainer__75297) ------------------------------- */
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) .blockquoteContainer {
+  display: flex;
+  margin-bottom: var(--space-4, 4px);
+  margin-top: var(--space-4, 4px);
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) .blockquoteContainer .blockquoteDivider {
+  border-radius: 4px;
+  min-width: 4px;
+  width: 4px;
+  background-color: var(--spine-default);
+}
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) .blockquoteContainer blockquote {
+  box-sizing: border-box;
+  /* UA blockquote margin (40px sides) would indent the quote past its spine. */
+  margin: 0;
+  padding-block: 0;
+  padding-inline: 12px 8px;
+  text-indent: 0;
+}
+
+/* --- <t:…> timestamp (timestamp__75297) ------------------------------------- */
+:is(.chat-page :is(.content, .dcEmbedMarkup), .bioMarkup) .timestampInline {
+  background-color: var(--background-mod-normal);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* --- code block scrollbar (scrollbarGhostHairline_da3286 scrollbar_da3286) -- */
+.chat-page .scrollbarGhostHairline::-webkit-scrollbar { height: 4px; width: 4px; }
+.chat-page .scrollbarGhostHairline::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--primary-800-hsl)/.6);
+  border-radius: 2px;
+  cursor: move;
+}
+.chat-page .scrollbarGhostHairline::-webkit-scrollbar-track { background-color: transparent; border: none; }
+.chat-page .scrollbarGhostHairline::-webkit-scrollbar-corner { background: none; border: none; }
+
+/* --- highlight.js theme (189281) ------------------------------------------- */
+.chat-page .hljs {
+  border-radius: 4px;
+  display: block;
+  overflow-x: auto;
+  padding: .5em;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  background: var(--background-base-lower);
+  color: var(--text-code);
+}
+.chat-page :is(.hljs-doctag, .hljs-keyword, .hljs-meta .hljs-keyword, .hljs-template-tag, .hljs-template-variable, .hljs-variable.language_) { color: var(--text-code-keyword); }
+.chat-page .hljs-type { color: var(--text-code-type); }
+.chat-page :is(.hljs-title, .hljs-title.class_, .hljs-title.class_.inherited__, .hljs-title.function_) { color: var(--text-code-title); }
+.chat-page :is(.hljs-literal, .hljs-params, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id, .hljs-variable) { color: var(--text-code-variable); }
+.chat-page :is(.hljs-attr, .hljs-attribute) { color: var(--text-code-attribute); }
+.chat-page .hljs-meta { color: var(--text-code-decorator); }
+.chat-page .hljs-property { color: var(--text-code-property); }
+.chat-page .hljs-number { color: var(--text-code-number); }
+.chat-page .hljs-operator { color: var(--text-code-operator); }
+.chat-page :is(.hljs-meta .hljs-string, .hljs-string) { color: var(--text-code-string); }
+.chat-page .hljs-regexp { color: var(--text-code-regexp); }
+.chat-page .hljs-built_in { color: var(--text-code-type); }
+.chat-page .hljs-symbol { color: var(--text-code-builtin); }
+.chat-page :is(.hljs-code, .hljs-comment, .hljs-formula) { color: var(--text-code-comment); }
+.chat-page :is(.hljs-name, .hljs-quote, .hljs-selector-pseudo, .hljs-selector-tag) { color: var(--text-code-tag); }
+.chat-page .hljs-subst { color: var(--text-code); }
+.chat-page .hljs-section { color: var(--text-code-section); font-weight: 700; }
+.chat-page .hljs-bullet { color: var(--text-code-bullet); }
+.chat-page .hljs-emphasis { color: var(--text-code); font-style: italic; }
+.chat-page .hljs-strong { color: var(--text-code); font-weight: 700; }
+.chat-page .hljs-link { color: var(--text-code-link); text-decoration: underline; }
+.chat-page .hljs-addition { background-color: var(--background-code-addition); color: var(--text-code-addition); }
+.chat-page .hljs-deletion { background-color: var(--background-code-deletion); color: var(--text-code-deletion); }
+
+/* --- ```ansi (Discord's ansi grammar) -------------------------------------- */
+.chat-page .hljs-ansi-control-sequence { display: none; }
+.chat-page .hljs-ansi-style-bold { font-weight: var(--font-weight-bold); }
+.chat-page .hljs-ansi-style-underline { text-decoration: underline; }
+.chat-page .hljs-ansi-foreground-black { color: var(--ansi-black); }
+.chat-page .hljs-ansi-foreground-red { color: var(--ansi-red); }
+.chat-page .hljs-ansi-foreground-green { color: var(--ansi-green); }
+.chat-page .hljs-ansi-foreground-yellow { color: var(--ansi-yellow); }
+.chat-page .hljs-ansi-foreground-blue { color: var(--ansi-blue); }
+.chat-page .hljs-ansi-foreground-magenta { color: var(--ansi-magenta); }
+.chat-page .hljs-ansi-foreground-cyan { color: var(--ansi-cyan); }
+.chat-page .hljs-ansi-foreground-white { color: var(--ansi-white); }
+.chat-page .hljs-ansi-background-black { background-color: var(--ansi-black); }
+.chat-page .hljs-ansi-background-red { background-color: var(--ansi-red); }
+.chat-page .hljs-ansi-background-green { background-color: var(--ansi-green); }
+.chat-page .hljs-ansi-background-yellow { background-color: var(--ansi-yellow); }
+.chat-page .hljs-ansi-background-blue { background-color: var(--ansi-blue); }
+.chat-page .hljs-ansi-background-magenta { background-color: var(--ansi-magenta); }
+.chat-page .hljs-ansi-background-cyan { background-color: var(--ansi-cyan); }
+.chat-page .hljs-ansi-background-white { background-color: var(--ansi-white); }
+
+/* --- embeds (embed__623de overrides) ---------------------------------------- */
+.chat-page .dcEmbedMarkup pre { border: none; max-width: 100%; }
+.chat-page .dcEmbedMarkup code { -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.chat-page .dcEmbedMarkup blockquote { max-width: 100%; }

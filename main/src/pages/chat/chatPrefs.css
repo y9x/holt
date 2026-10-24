@@ -1,0 +1,30 @@
+/* Chat preference effects, applied on the .chat-page root by useChatPrefs()
+   (chatPrefs.ts). Each class is only present when its setting is changed, so
+   the default look is untouched. */
+
+/* Reduced Motion: the chat's own animations and transitions (settings pop,
+   skeleton shimmer, hover reveals) resolve to an instant end state. */
+.chat-page.chat-reduce-motion *,
+.chat-page.chat-reduce-motion *::before,
+.chat-page.chat-reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Chat Font Scaling: message text grows or shrinks around the 1rem default. */
+.chat-page.chat-font-scaled .messages .content {
+  font-size: calc(1rem * var(--chat-font-scale, 1)) !important;
+  line-height: calc(1.375rem * var(--chat-font-scale, 1)) !important;
+}
+
+/* Message Group Spacing: overrides the density's group gap token. */
+.chat-page.chat-group-spacing .messages {
+  --custom-group-spacing-start: var(--chat-group-spacing) !important;
+}
+
+/* Always underline links (Discord's "Always underline links"). */
+.chat-page.chat-underline-links .messages .content a {
+  text-decoration: underline !important;
+}

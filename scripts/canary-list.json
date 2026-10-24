@@ -1,5 +1,5 @@
 {
-  "_README": "holt's canaries: plaintext strings that must NOT appear verbatim in any shipped holt bundle (main/dist) or the partner loader (main/loader). Scanned by scripts/check-plaintext-leaks.mjs (vendored from abulxt), which hard-fails with exit 2 on a hit. This list lives in scripts/ so it is never emitted into the bundle. holt-owned: abulxt's list names abulxt's brands and domains. Keep it small; add a string only when it is a real literal rendered to users that holt commits to hiding.",
+  "_README": "holt's canaries: plaintext strings that must NOT appear verbatim in any shipped holt bundle (main/dist) or the partner loader (main/loader). Scanned by scripts/check-plaintext-leaks.mjs (vendored from abulxt), which hard-fails with exit 2 on a hit. This list lives in scripts/ so it is never emitted into the bundle. holt-owned: abulxt's list names abulxt's brands and domains. Keep it small; add a string only when it is a real literal rendered to users that holt commits to hiding. Since holt ships abulxt's chatbox (chatClient in vendor-manifest.json), it also carries abulxt's canaries (scripts/canary-list.json there), marked \"abulxt:\". Re-merge when abulxt adds one.",
   "canaries": [
     {
       "value": "Browsing as a guest.",
@@ -12,6 +12,102 @@
     {
       "value": "Verify your email to chat.",
       "reason": "Compose gate copy (writeDenialCore's message in abulxt), HolyText-wrapped. Will be rendered by the moved chat client."
+    },
+    {
+      "value": "support@mathewteachesalgebra.site",
+      "reason": "abulxt: B1: contact mailto address (rendered in tos.tsx). Real domain leak."
+    },
+    {
+      "value": "https://discord.gg/zKV3atanu",
+      "reason": "abulxt: B1: Discord server invite URL (chat.tsx). Community/brand leak."
+    },
+    {
+      "value": "Go ad-free for $1",
+      "reason": "abulxt: B1: preroll upsell copy (Preroll.tsx). Distinctive brand/monetization string."
+    },
+    {
+      "value": "Terms of Service",
+      "reason": "abulxt: B1: legal anchor text (home.tsx, tos.tsx, ShortcutRail.tsx)."
+    },
+    {
+      "value": "Privacy Policy",
+      "reason": "abulxt: B1: legal anchor text (home.tsx, tos.tsx, ShortcutRail.tsx)."
+    },
+    {
+      "value": "Abstract.",
+      "reason": "abulxt: B1: brand name / document.title set in JS (home.tsx, App.tsx, index.html shell)."
+    },
+    {
+      "value": "scramjet",
+      "reason": "abulxt: P1: proxy software name (vendored scramjet runtime). Renamed in proxy vendor code by obfuscate-build.mjs; must not appear in plaintext in any shipped bundle."
+    },
+    {
+      "value": "Scramjet",
+      "reason": "abulxt: P1: proxy software name, PascalCase form (class/comment/label text)."
+    },
+    {
+      "value": "bare-mux",
+      "reason": "abulxt: P1: proxy software name (bare-mux transport mux). Hyphen form."
+    },
+    {
+      "value": "BareMux",
+      "reason": "abulxt: P1: proxy software name, PascalCase form."
+    },
+    {
+      "value": "wispurr",
+      "reason": "abulxt: P1: proxy software name (Wisp client in the proxy transport)."
+    },
+    {
+      "value": "Wispurr",
+      "reason": "abulxt: P1: proxy software name, PascalCase form."
+    },
+    {
+      "value": "epoxy",
+      "reason": "abulxt: P1: proxy transport engine name (epoxy-tls). Wasm export names are renamed in the embedded binary too."
+    },
+    {
+      "value": "Epoxy",
+      "reason": "abulxt: P1: proxy transport engine name, PascalCase form (class names, user-visible labels)."
+    },
+    {
+      "value": "libcurl",
+      "reason": "abulxt: P1: proxy transport engine name (libcurl.js)."
+    },
+    {
+      "value": "Libcurl",
+      "reason": "abulxt: P1: proxy transport engine name, PascalCase form."
+    },
+    {
+      "value": "baremux",
+      "reason": "abulxt: P1: proxy software name (bare-mux identifier forms, e.g. baremuxinit). Renamed in proxy vendor code."
+    },
+    {
+      "value": "bare_mux",
+      "reason": "abulxt: P1: proxy software name (bare-mux identifier forms, e.g. baremuxinit). Renamed in proxy vendor code."
+    },
+    {
+      "value": "/wisp/",
+      "reason": "abulxt: listed without a reason in abulxt scripts/canary-list.json"
+    },
+    {
+      "value": "wispUrl",
+      "reason": "abulxt: listed without a reason in abulxt scripts/canary-list.json"
+    },
+    {
+      "value": "wispPath",
+      "reason": "abulxt: listed without a reason in abulxt scripts/canary-list.json"
+    },
+    {
+      "value": "wispKey",
+      "reason": "abulxt: listed without a reason in abulxt scripts/canary-list.json"
+    },
+    {
+      "value": "__uv$config",
+      "reason": "abulxt: listed without a reason in abulxt scripts/canary-list.json"
+    },
+    {
+      "value": "ultraviolet",
+      "reason": "abulxt: listed without a reason in abulxt scripts/canary-list.json"
     }
   ]
 }

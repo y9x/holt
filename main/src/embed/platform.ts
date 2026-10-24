@@ -16,6 +16,8 @@ export interface EmbedPlatform {
   links: PlatformLinks
   /** Proxy mode, localStorage logins: the key holding the platform's bearer token on its own origin. */
   tokenStorageKey: string | null
+  /** Proxy mode: render the full chatbox (the platform's origin serves the chat API). */
+  chat: boolean
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -33,7 +35,7 @@ export function readPlatform(): EmbedPlatform | null {
     return null
   }
   if (typeof raw !== 'object' || raw === null) return null
-  const { id, name, mode, origins, links, tokenStorageKey } = raw as Record<string, unknown>
+  const { id, name, mode, origins, links, tokenStorageKey, chat } = raw as Record<string, unknown>
   if (typeof id !== 'string' || typeof name !== 'string' || !Array.isArray(origins)) return null
   const linkObject = (typeof links === 'object' && links !== null ? links : {}) as Record<string, unknown>
   return {
@@ -48,5 +50,6 @@ export function readPlatform(): EmbedPlatform | null {
       signIn: stringOrNull(linkObject.signIn),
     },
     tokenStorageKey: mode === 'proxy' && typeof tokenStorageKey === 'string' && tokenStorageKey ? tokenStorageKey : null,
+    chat: mode === 'proxy' && chat === true,
   }
 }

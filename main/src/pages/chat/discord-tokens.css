@@ -1,0 +1,371 @@
+/* Discord nightshade design tokens — the custom-property layer the vendored
+ * CSS (discord-vendored.css) resolves against. Values ripped from Discord's
+ * theme chunk (952007) + entry-base (419070), dark theme, saturation-factor 1.
+ * Scoped under .chat-page so they never collide with the app shell. */
+
+.chat-page, .bioMarkup {
+  /* saturation-factor applied by Discord's theme engine; 1 = full color. */
+  --saturation-factor: 1;
+
+  /* --- raw HSL channels (neutral ramp + brand) --- */
+  --neutral-1-hsl: 0 calc(var(--saturation-factor)*0%) 100%;
+  --neutral-10-hsl: 240 calc(var(--saturation-factor)*4.478%) 86.863%;
+  --neutral-13-hsl: 240 calc(var(--saturation-factor)*4.545%) 82.745%;
+  --neutral-19-hsl: 230 calc(var(--saturation-factor)*4.545%) 74.118%;
+  --neutral-36-hsl: 234 calc(var(--saturation-factor)*4%) 50.98%;
+  --neutral-50-hsl: 234.545 calc(var(--saturation-factor)*6.509%) 33.137%;
+  --neutral-73-hsl: 230 calc(var(--saturation-factor)*6.383%) 18.431%;
+  --neutral-79-hsl: 240 calc(var(--saturation-factor)*6.494%) 15.098%;
+  --neutral-80-hsl: 228 calc(var(--saturation-factor)*6.849%) 14.314%;
+  --neutral-82-hsl: 240 calc(var(--saturation-factor)*5.882%) 13.333%;
+  --neutral-86-hsl: 240 calc(var(--saturation-factor)*7.143%) 10.98%;
+  --neutral-92-hsl: 240 calc(var(--saturation-factor)*5.263%) 7.451%;
+  --blurple-38-hsl: 231.364 calc(var(--saturation-factor)*90.411%) 71.373%;
+  /* blurple-50 = Discord brand-500. These channels compute to exactly
+     rgb(88,101,242) / #5865F2 (verified hsl->rgb round-trip). */
+  --blurple-50-hsl: 234.935 calc(var(--saturation-factor)*85.556%) 64.706%;
+  /* Very light blurple step (.theme-dark's mention foreground; midnight uses
+     blurple-29, below), and the translucent blurple ramps behind code spans
+     and mention chips. */
+  --blurple-8-hsl: 228 calc(var(--saturation-factor)*100%) 90.196%;
+  --opacity-blurple-8-hsl: 234.935 calc(var(--saturation-factor)*85.556%) 64.706%;
+  --opacity-blurple-24-hsl: 234.935 calc(var(--saturation-factor)*85.556%) 64.706%;
+  --blue-new-36-hsl: 212.866 calc(var(--saturation-factor)*83.069%) 62.941%;
+  --red-new-16-hsl: 2.609 calc(var(--saturation-factor)*100%) 81.961%;
+  --white-hsl: 0 calc(var(--saturation-factor)*0%) 100%;
+  --premium-tier-2-purple-hsl: 270 calc(var(--saturation-factor)*86.667%) 70.588%;
+  --premium-tier-2-pink-hsl: 342 calc(var(--saturation-factor)*57.971%) 72.941%;
+  --premium-tier-2-purple-for-gradients-2-hsl: 295.645 calc(var(--saturation-factor)*50%) 51.373%;
+  --opacity-12-hsl: 240 calc(var(--saturation-factor)*4%) 60.784%;
+  --opacity-black-16-hsl: 0 calc(var(--saturation-factor)*0%) 0%;
+  --opacity-black-20-hsl: 0 calc(var(--saturation-factor)*0%) 0%;
+  --opacity-black-28-hsl: 0 calc(var(--saturation-factor)*0%) 0%;
+  --opacity-white-28-hsl: 0 calc(var(--saturation-factor)*0%) 100%;
+  --opacity-white-68-hsl: 0 calc(var(--saturation-factor)*0%) 100%;
+  --neutral-23-hsl: 231.429 calc(var(--saturation-factor)*4.348%) 68.431%;
+  --neutral-16-hsl: 228 calc(var(--saturation-factor)*4.505%) 78.235%;
+  --neutral-27-hsl: 232.5 calc(var(--saturation-factor)*4.255%) 63.137%;
+  --neutral-28-hsl: 232.5 calc(var(--saturation-factor)*4.082%) 61.569%;
+  --neutral-39-hsl: 234 calc(var(--saturation-factor)*4.167%) 47.059%;
+  --neutral-47-hsl: 234 calc(var(--saturation-factor)*5.319%) 36.863%;
+  /* midnight ramp */
+  --neutral-100-hsl: 0 calc(var(--saturation-factor)*0%) 0%;
+  --neutral-96-hsl: 240 calc(var(--saturation-factor)*9.091%) 4.314%;
+  --neutral-93-hsl: 240 calc(var(--saturation-factor)*8.571%) 6.863%;
+  --neutral-88-hsl: 225 calc(var(--saturation-factor)*8%) 9.804%;
+  --neutral-12-hsl: 225 calc(var(--saturation-factor)*4.878%) 83.922%;
+  --neutral-35-hsl: 233.333 calc(var(--saturation-factor)*3.704%) 52.353%;
+  --neutral-29-hsl: 232.5 calc(var(--saturation-factor)*3.96%) 60.392%;
+  --neutral-37-hsl: 233.333 calc(var(--saturation-factor)*3.557%) 49.608%;
+  --opacity-20-hsl: 240 calc(var(--saturation-factor)*4%) 60.784%;
+  --opacity-16-hsl: 240 calc(var(--saturation-factor)*4%) 60.784%;
+  --opacity-24-hsl: 240 calc(var(--saturation-factor)*4%) 60.784%;
+  --primary-700-hsl: 225 calc(var(--saturation-factor)*6.25%) 12.549%;
+  /* .visual-refresh re-points green-360 at green-new-40 (the :root
+     145.385/65%/39.216% is the pre-refresh value). */
+  --green-360-hsl: var(--green-new-40-hsl);
+  --red-new-18-hsl: 3 calc(var(--saturation-factor)*100%) 80.392%;
+
+  /* --- resolved colors — THEME-MIDNIGHT (Discord's actual dark theme: pure-
+     black base, translucent borders). These are the values the live client
+     computes, NOT the legacy default-dark nightshade ramp. --- */
+  --background-base-lowest: hsl(var(--neutral-100-hsl)/1);
+  --background-base-lower: hsl(var(--neutral-100-hsl)/1);
+  --background-base-low: hsl(var(--neutral-100-hsl)/1);
+  --background-surface-high: hsl(var(--neutral-96-hsl)/1);
+  --background-surface-higher: hsl(var(--neutral-92-hsl)/1);
+  --background-surface-highest: hsl(var(--neutral-88-hsl)/1);
+  --background-tertiary: hsl(var(--neutral-93-hsl)/1);
+  /* Inline code + code block background — Discord midnight's translucent
+     blurple wash (chunk-theme.css), NOT the pure-black base tier. */
+  --background-code: hsl(var(--opacity-blurple-8-hsl)/0.078);
+  --background-mod-subtle: hsl(var(--opacity-12-hsl)/0.1216);
+  --border-subtle: hsl(var(--opacity-20-hsl)/0.2);
+  --border-muted: hsl(var(--opacity-16-hsl)/0.1608);
+  --border-normal: hsl(var(--opacity-24-hsl)/0.2392);
+  --text-default: hsl(var(--neutral-12-hsl)/1);
+  --text-muted: hsl(var(--neutral-35-hsl)/1);
+  --text-strong: hsl(var(--neutral-10-hsl)/1);
+  --text-subtle: hsl(var(--neutral-29-hsl)/1);
+  --interactive-text-default: hsl(var(--neutral-29-hsl)/1);
+  --interactive-text-hover: hsl(var(--neutral-10-hsl)/1);
+  --brand-400: hsl(var(--blurple-38-hsl)/1);
+  --brand-500: hsl(var(--blurple-50-hsl)/1);
+  --white: hsl(var(--white-hsl)/1);
+  --blue-345: hsl(var(--blue-new-36-hsl)/1);
+  --chat-background-default: hsl(var(--neutral-93-hsl)/1);
+  --input-background-default: hsl(0 0% 0%/0.1216);
+  --app-frame-border: hsl(var(--opacity-20-hsl)/0.2);
+  /* .theme-midnight: critical feedback family = red-new-37. */
+  --icon-feedback-critical: hsl(var(--red-new-37-hsl)/1);
+  --text-feedback-critical: hsl(var(--red-new-37-hsl)/1);
+  --primary-500-hsl: var(--neutral-50-hsl);
+  --primary-500: hsl(var(--primary-500-hsl)/1);
+  --primary-630-hsl: var(--neutral-73-hsl);
+  --primary-800-hsl: var(--neutral-92-hsl);
+  --opacity-black-20: hsl(var(--opacity-black-20-hsl)/0.2);
+  --opacity-black-28: hsl(var(--opacity-black-28-hsl)/0.2784);
+  --opacity-white-28: hsl(var(--opacity-white-28-hsl)/0.2784);
+  --opacity-white-68: hsl(var(--opacity-white-68-hsl)/0.6784);
+  --premium-tier-2-purple: hsl(var(--premium-tier-2-purple-hsl)/1);
+  --premium-tier-2-pink: hsl(var(--premium-tier-2-pink-hsl)/1);
+  --premium-tier-2-purple-for-gradients-2: hsl(var(--premium-tier-2-purple-for-gradients-2-hsl)/1);
+
+  /* Icon + interactive-state tokens (channel rows, tooltip pointer) — midnight. */
+  --icon-muted: hsl(var(--neutral-35-hsl)/1);
+  --icon-subtle: hsl(var(--neutral-29-hsl)/1);
+  --icon-strong: hsl(var(--neutral-10-hsl)/1);
+  --channel-icon: hsl(var(--neutral-37-hsl)/1);
+  --interactive-background-hover: hsl(var(--opacity-12-hsl)/0.1216);
+  --interactive-background-selected: hsl(var(--opacity-24-hsl)/0.2392);
+  /* Secondary control (button) hover wash — Discord's user-panel/context buttons. */
+  --control-secondary-background-hover: hsl(var(--opacity-20-hsl)/0.2);
+  --interactive-text-active: hsl(var(--neutral-10-hsl)/1);
+  --primary-700: hsl(var(--primary-700-hsl)/1);
+  --green-360: hsl(var(--green-360-hsl)/1);
+  --border-feedback-critical: hsl(var(--red-new-37-hsl)/1);
+  --border-strong: hsl(var(--opacity-44-hsl)/0.4392);
+  /* Reply-spine elbow — Discord's solid mid-grey curve (--spine-default). */
+  /* .theme-midnight sets --spine-default to neutral-65 (neutral-47 is the
+     .theme-dark value; midnight is declared later and wins on the live
+     <html class="theme-dark theme-midnight">). Also feeds Discord's
+     .blockquoteDivider (background-color: var(--spine-default)). */
+  --spine-default: hsl(var(--neutral-65-hsl)/1);
+
+  /* Elevation shadows (Discord's shadow-* scale). */
+  --shadow-low: 0 1px 4px 0 hsl(0 0% 0%/0.14);
+  --shadow-medium: 0 4px 8px 0 hsl(0 0% 0%/0.16);
+  --shadow-high: 0 12px 24px 0 hsl(0 0% 0%/0.24);
+  --shadow-border: 0 0 0 1px hsl(0 0% 100%/0.08);
+
+  /* Gradients collapse to their tier color when no custom theme is set. The
+     composer reads --background-gradient-highest, which in midnight is the
+     neutral-93 input tier (verified ≈ rgb(18,18,20) on the live bar). */
+  --background-gradient-chat: var(--background-base-lowest);
+  --background-gradient-highest: hsl(var(--neutral-93-hsl)/1);
+
+  /* --- spacing scale --- */
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-xs: var(--space-8);
+  --space-sm: var(--space-12);
+  --space-md: var(--space-16);
+  --space-lg: var(--space-24);
+  --space-xl: var(--space-32);
+
+  /* --- radii --- */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  /* --- type weights --- */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --font-weight-extrabold: 800;
+
+  /* --- layout / component sizing --- */
+  /* Channel header + message geometry. */
+  --custom-channel-header-height: 49px;
+  --custom-message-margin-horizontal: var(--space-16);
+  --chat-avatar-size: 40px;
+  --custom-message-margin-left-content-cozy: calc(var(--chat-avatar-size) + var(--custom-message-margin-horizontal) + var(--custom-message-margin-horizontal));
+  --custom-message-spacing-vertical-container-cozy: 0.125rem;
+  --custom-message-meta-space: 0.25rem;
+  --custom-message-margin-compact-indent: 5rem;
+  --timestamp-width: 2.25rem;
+  --reply-spacing: 4px;
+  --custom-group-spacing-start: 0.0625rem;
+  --custom-channel-textarea-editor-min-height: calc(var(--custom-channel-textarea-text-area-height) + var(--chat-markup-line-height));
+  /* Timestamp / muted chat text — live Discord measures rgb(129,130,138)
+     (#81828A), which is neutral-35, NOT neutral-39 (rgb 115,116,125, too dark). */
+  --chat-text-muted: hsl(var(--neutral-35-hsl)/1);
+  --message-background-hover: hsl(var(--opacity-12-hsl)/0.1216);
+  /* Active/pressed state for interactive controls (hover-toolbar buttons etc.) —
+     the vendored d-msgHover*:active rules reference this; opacity-20 at full alpha. */
+  --interactive-background-active: hsl(var(--opacity-20-hsl)/0.2);
+
+  /* Refresh visual-refresh build: guild icons are 40px (classic was 48px), so
+     the rail computes to 40 + 12*2 = 64px (classic 72px). */
+  --guildbar-avatar-size: 40px;
+  --custom-guild-list-padding: var(--space-12);
+  --custom-guild-list-width: calc(var(--guildbar-avatar-size) + var(--custom-guild-list-padding)*2);
+  --custom-guild-sidebar-width: 240px;
+  --custom-channel-textarea-text-area-height: 56px;
+  --custom-channel-textarea-text-area-max-height: 50vh;
+  --chat-markup-line-height: 1.375rem;
+  --custom-rtc-account-height: 44px;
+  --custom-panels-spacing: var(--space-8);
+  --chat-resize-handle-width: 4px;
+
+  /* Tokens the vendored sheet / components reference that were previously
+     undefined (silent no-ops). Values from chunk-theme.css / live client. */
+  --space-xxs: var(--space-4);
+  --custom-user-profile-popout-width: 300px;
+  --custom-message-reply-indent: 0.625rem; /* :root value in Discord css (10px) */
+  --opacity-black-60: hsl(0 0% 0%/0.6);
+  --chat-input-icon-size: 20px;
+  --control-critical-secondary-text-default: hsl(var(--red-new-37-hsl)/1);
+  --control-critical-secondary-text-hover: hsl(var(--red-new-37-hsl)/1);
+  --control-critical-secondary-text-active: hsl(var(--red-new-37-hsl)/1);
+  /* Modifier washes the vendored sheet uses for hover/active states. */
+  --background-mod-muted: hsl(var(--opacity-8-hsl, 240 4% 60.784%)/0.08);
+  --background-mod-normal: hsl(var(--opacity-20-hsl)/0.2); /* midnight: opacity-20 */
+  --background-mod-strong: hsl(var(--opacity-24-hsl)/0.2392);
+  /* Brand text accent (links, reacted counts) — Discord's blurple text step. */
+  --text-brand: hsl(var(--blurple-45-hsl)/1); /* midnight: blurple-45 */
+
+  /* --- Tokens chat.css / vendored rules reference that were undefined.
+     Every value is Discord's own: raw channels from chunk-theme.css (952007)
+     :root, semantic mappings from its .visual-refresh / .theme-midnight
+     scopes (the live client is <html class="theme-dark theme-midnight
+     visual-refresh">), layout scalars from entry-base (419070) :root. --- */
+  --neutral-38-hsl: 234 calc(var(--saturation-factor)*4.065%) 48.235%;
+  --opacity-44-hsl: 240 calc(var(--saturation-factor)*4%) 60.784%;
+  --blurple-45-hsl: 232.966 calc(var(--saturation-factor)*86.826%) 67.255%;
+  --neutral-65-hsl: 232.5 calc(var(--saturation-factor)*6.667%) 23.529%;
+  --opacity-8-hsl: 240 calc(var(--saturation-factor)*4%) 60.784%;
+  --blurple-60-hsl: 232.941 calc(var(--saturation-factor)*46.667%) 50%;
+  --blurple-65-hsl: 232 calc(var(--saturation-factor)*47.511%) 43.333%;
+  --opacity-blurple-12-hsl: 234.935 calc(var(--saturation-factor)*85.556%) 64.706%;
+  --brand-500-hsl: var(--blurple-50-hsl); /* .visual-refresh */
+  --red-new-32-hsl: 1.343 calc(var(--saturation-factor)*84.81%) 69.02%;
+  --red-new-37-hsl: 0.426 calc(var(--saturation-factor)*77.901%) 64.51%;
+  --red-new-45-hsl: 358.052 calc(var(--saturation-factor)*68.75%) 56.078%;
+  --red-new-46-hsl: 357.692 calc(var(--saturation-factor)*67.826%) 54.902%;
+  --red-new-50-hsl: 355.636 calc(var(--saturation-factor)*64.706%) 50%;
+  --red-new-60-hsl: 355.075 calc(var(--saturation-factor)*65.686%) 40%;
+  --red-new-65-hsl: 354.59 calc(var(--saturation-factor)*67.778%) 35.294%;
+  --red-new-98-hsl: 353.143 calc(var(--saturation-factor)*100%) 6.863%;
+  --red-400-hsl: var(--red-new-46-hsl); /* .visual-refresh */
+  --green-new-40-hsl: 141.649 calc(var(--saturation-factor)*44.292%) 42.941%;
+  --green-new-50-hsl: 151.128 calc(var(--saturation-factor)*100%) 26.078%;
+  --green-new-60-hsl: 150.556 calc(var(--saturation-factor)*100%) 21.176%;
+  --green-new-65-hsl: 150.316 calc(var(--saturation-factor)*100%) 18.627%;
+  --yellow-new-22-hsl: 38.483 calc(var(--saturation-factor)*100%) 71.569%;
+  --yellow-new-59-hsl: 37.573 calc(var(--saturation-factor)*100%) 40.392%;
+  --opacity-yellow-4-hsl: 39.435 calc(var(--saturation-factor)*100%) 48.627%;
+  --illo-green-40-hsl: 143.804 calc(var(--saturation-factor)*83.636%) 56.863%;
+  --illo-purple-40-hsl: 268.462 calc(var(--saturation-factor)*85.714%) 64.314%;
+  --premium-tier-2-purple-for-gradients-hsl: 269.291 calc(var(--saturation-factor)*52.697%) 52.745%;
+  --premium-tier-2-pink-for-gradients-hsl: 325.385 calc(var(--saturation-factor)*31.707%) 51.765%;
+  --opacity-black-72-hsl: 0 calc(var(--saturation-factor)*0%) 0%;
+
+  /* Filled buttons (lookFilled colorBrand / colorRed / colorGreen, 168184). */
+  --background-brand: hsl(var(--blurple-50-hsl)/1);
+  --control-primary-background-default: hsl(var(--blurple-50-hsl)/1);
+  --control-primary-background-hover: hsl(var(--blurple-60-hsl)/1);
+  --control-primary-background-active: hsl(var(--blurple-65-hsl)/1);
+  --control-primary-text-default: hsl(var(--neutral-1-hsl)/1);
+  --control-critical-primary-background-default: hsl(var(--red-new-50-hsl)/1);
+  --control-critical-primary-background-hover: hsl(var(--red-new-60-hsl)/1);
+  --control-critical-primary-background-active: hsl(var(--red-new-65-hsl)/1);
+  --control-connected-background-default: hsl(var(--green-new-50-hsl)/1);
+  --control-connected-background-hover: hsl(var(--green-new-60-hsl)/1);
+  --control-connected-background-active: hsl(var(--green-new-65-hsl)/1);
+
+  /* Feedback / notice (messagesErrorBar, unread divider, mention bar). */
+  --notice-background-critical: hsl(var(--red-new-98-hsl)/1);
+  --notice-text-critical: hsl(var(--red-new-18-hsl)/1);
+  --background-feedback-notification: hsl(var(--red-new-50-hsl)/1);
+  --icon-feedback-warning: hsl(var(--yellow-new-59-hsl)/1);
+
+  /* Presence colors — ICON_STATUS_* (RED_NEW_45 / YELLOW_NEW_22 / NEUTRAL_27). */
+  --icon-status-online: hsl(var(--green-new-40-hsl)/1);
+  --icon-status-idle: hsl(var(--yellow-new-22-hsl)/1);
+  --icon-status-dnd: hsl(var(--red-new-45-hsl)/1);
+  --icon-status-offline: hsl(var(--neutral-27-hsl)/1);
+
+  /* Markdown spoiler (.spoilerMarkdownContent, 880150): hidden fill + hover;
+     revealed uses --background-mod-subtle. */
+  --spoiler-hidden-background: hsl(var(--neutral-47-hsl)/1);
+  --spoiler-hidden-background-hover: hsl(var(--neutral-38-hsl)/1);
+
+  /* Modal scrim (.scrim__40128) — opacity-black-72. */
+  --background-scrim: hsl(var(--opacity-black-72-hsl)/0.7216);
+
+  /* Message-row states used by the vendored message-list sheet. */
+  --brand-10a: hsla(var(--brand-500-hsl)/0.1);
+  --message-automod-background-hover: hsl(var(--red-400-hsl)/0.1);
+  --message-highlight-background-hover: hsl(var(--opacity-blurple-12-hsl)/0.1216);
+  --message-mentioned-background-hover: hsl(var(--opacity-yellow-4-hsl)/0.0392);
+  --custom-message-padding-vertical-container-compact: 0.125rem;
+  --decoration-to-avatar-ratio: 1.2;
+
+  /* Discord leaves these unset outside custom themes / official-message
+     guilds (JS injects them per message); `initial` is the guaranteed-invalid
+     value — identical to Discord's unset state, so var() fallbacks apply. */
+  --background-gradient-lower: initial;
+
+  /* Tokens previously approximated in chat.css's .chat-page block — moved
+     here with the exact midnight / visual-refresh values. */
+  --blurple-29-hsl: 229.381 calc(var(--saturation-factor)*96.581%) 77.059%;
+  --blue-new-30-hsl: 213.043 calc(var(--saturation-factor)*86.25%) 68.627%;
+  --blue-new-45-hsl: 211.875 calc(var(--saturation-factor)*80%) 52.941%;
+  --neutral-91-hsl: 220 calc(var(--saturation-factor)*7.317%) 8.039%; /* = plum-23 */
+  --opacity-yellow-8-hsl: 39.435 calc(var(--saturation-factor)*100%) 48.627%;
+  --opacity-black-40-hsl: 0 calc(var(--saturation-factor)*0%) 0%;
+  --opacity-black-40: hsl(var(--opacity-black-40-hsl)/0.4);
+  --text-link: hsl(var(--blue-new-45-hsl)/1);
+  --status-danger: hsl(var(--red-400-hsl)/1);
+  --mention-foreground: hsl(var(--blurple-29-hsl)/1);
+  --mention-background: hsl(var(--opacity-blurple-24-hsl)/0.2392);
+  --channels-default: hsl(var(--neutral-37-hsl)/1);
+  --background-accent: hsl(var(--neutral-73-hsl)/1); /* = plum-17 */
+  --channeltextarea-background: hsl(var(--neutral-91-hsl)/1);
+  --textbox-markdown-syntax: hsl(var(--neutral-29-hsl)/1); /* = plum-9 */
+  --logo-primary: var(--white);
+  --guild-header-text-shadow: 0 1px 1px var(--opacity-black-40);
+  --border-focus: hsl(var(--blue-new-30-hsl)/1);
+  --message-mentioned-background-default: hsl(var(--opacity-yellow-8-hsl)/0.0784);
+  --custom-message-content-color: initial;
+  --custom-guild-official-message-hsl: initial;
+  --custom-guild-official-message-alpha: initial;
+  --custom-guild-official-message-dither-opacity: initial;
+
+  /* Reaction pill / add-reaction button tokens — .theme-midnight block of the
+     theme chunk (its --reaction-* set; .theme-dark's differs). */
+  --blurple-24-hsl: 228.713 calc(var(--saturation-factor)*100%) 80.196%;
+  --reaction-background-active: hsl(var(--opacity-24-hsl)/0.23921568627450981);
+  --reaction-background-default: hsl(var(--opacity-12-hsl)/0.12156862745098039);
+  --reaction-background-hover: hsl(var(--opacity-20-hsl)/0.2);
+  --reaction-background-reacted-default: hsl(var(--opacity-blurple-24-hsl)/0.23921568627450981);
+  --reaction-background-reacted-hover: hsl(var(--opacity-blurple-24-hsl)/0.23921568627450981);
+  --reaction-border-active: hsl(var(--opacity-44-hsl)/0.4392156862745098);
+  --reaction-border-default: hsl(var(--opacity-20-hsl)/0.2);
+  --reaction-border-hover: hsl(var(--opacity-16-hsl)/0.1607843137254902);
+  --reaction-border-reacted-default: hsl(var(--blurple-50-hsl)/1);
+  --reaction-text-active: hsl(var(--neutral-10-hsl)/1);
+  --reaction-text-default: hsl(var(--neutral-29-hsl)/1);
+  --reaction-text-hover: hsl(var(--neutral-10-hsl)/1);
+  --reaction-text-reacted-default: hsl(var(--blurple-24-hsl)/1);
+  /* Mana TextInput tokens (.theme-midnight) — the expression picker search. */
+  --input-border-default: hsl(var(--opacity-24-hsl)/0.23921568627450981);
+  --input-border-hover: hsl(var(--opacity-24-hsl)/0.23921568627450981);
+  --input-border-active: hsl(var(--blurple-50-hsl)/1);
+  --input-text-default: hsl(var(--neutral-12-hsl)/1);
+  --input-placeholder-text-default: hsl(var(--neutral-36-hsl)/1);
+  --control-secondary-background-active: hsl(var(--opacity-24-hsl)/0.23921568627450981);
+}
+
+/* Scrollbar tokens — Discord .theme-midnight values (theme CSS):
+ * thin + auto thumbs are --neutral-47; the WebKit tracks are fully
+ * transparent (--black-hsl / --transparent-hsl at alpha 0); the Firefox
+ * `scrollbar-color` pair for auto scrollers is neutral-47 on neutral-100. */
+.chat-page {
+  --scrollbar-thin-thumb: hsl(var(--neutral-47-hsl)/1);
+  --scrollbar-thin-track: hsl(0 calc(var(--saturation-factor)*0%) 0%/0);
+  --scrollbar-auto-thumb: hsl(var(--neutral-47-hsl)/1);
+  --scrollbar-auto-track: hsl(0 calc(var(--saturation-factor)*0%) 0%/0);
+  --scrollbar-auto-scrollbar-color-thumb: hsl(var(--neutral-47-hsl)/1);
+  --scrollbar-auto-scrollbar-color-track: hsl(var(--neutral-100-hsl)/1);
+}

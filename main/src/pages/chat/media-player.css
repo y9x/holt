@@ -1,0 +1,492 @@
+/* Discord's inline media player (MediaPlayer.tsx).
+ * Values are Discord's own: wrapper_cf09d8 / videoControls_cf09d8 /
+ * controlIcon_cf09d8 (505634), mediaBar_b26b79 (64097), the volume
+ * container/slider (239729, module 20504) and the play/pause pop. */
+
+/* --- Wrapper --- */
+.chat-page .dcMediaWrapper {
+  background-color: var(--background-base-lower);
+  border-radius: 3px;
+  color: var(--white);
+  overflow: hidden;
+  position: relative;
+  user-select: none;
+}
+
+.chat-page .dcWrapperAudio {
+  background-color: var(--background-base-lower);
+  border: 1px solid var(--border-subtle);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  max-width: 100%;
+  overflow: visible;
+  border-radius: 8px;
+  padding: 16px;
+  width: 432px;
+}
+
+.chat-page .dcWrapperVideo {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: #000;
+}
+
+.chat-page .dcWrapperVideo.wrapperControlsHidden {
+  cursor: default;
+}
+
+.chat-page .dcWrapperVideo.fullscreen,
+.chat-page .dcWrapperVideo:fullscreen {
+  aspect-ratio: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0;
+}
+
+.chat-page .dcVideo {
+  border-radius: 3px;
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  position: relative;
+  width: 100%;
+}
+
+.chat-page .dcVideo::-webkit-media-controls-enclosure {
+  display: none !important;
+}
+
+.chat-page .dcAudio {
+  display: block;
+  height: 0;
+  position: absolute;
+  width: 0;
+}
+
+/* --- Header: audio metadata row and video overlay (Embeds.tsx) --- */
+.chat-page .dcAudioMetadata {
+  display: flex;
+  align-items: flex-start;
+}
+
+.chat-page .dcAudioMetadata::before {
+  background-image: url(/vendor/discord/file-icons/icon-file-audio.svg);
+  background-repeat: no-repeat;
+  background-size: 100% auto;
+  content: "";
+  height: 40px;
+  width: 24px;
+  flex: 0 0 auto;
+}
+
+.chat-page .dcMetadataContent {
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 0 8px;
+  min-width: 0;
+}
+
+.chat-page .dcMetadataName,
+.chat-page .dcMetadataSize {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.chat-page .dcMetadataName {
+  font-size: 16px;
+  line-height: 20px;
+}
+
+.chat-page .dcAudioMetadata .dcMetadataSize {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.chat-page .dcVideoMetadata {
+  align-items: flex-start;
+  background-image: linear-gradient(0deg, transparent, rgba(0, 0, 0, .9));
+  box-sizing: border-box;
+  display: flex;
+  height: 80px;
+  position: absolute;
+  top: -10px;
+  inset-inline: 0;
+  padding: 22px 12px 12px;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity .2s ease;
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.chat-page .dcWrapperVideo:hover .dcVideoMetadata {
+  opacity: 1;
+}
+
+.chat-page .dcVideoMetadata .dcMetadataContent {
+  padding: 0;
+}
+
+.chat-page .dcVideoMetadata .dcMetadataSize {
+  opacity: .7;
+  font-size: 12px;
+}
+
+.chat-page .dcVideoMetadata .dcMetadataDownload {
+  color: var(--white);
+  opacity: .6;
+}
+
+.chat-page .dcVideoMetadata .dcMetadataDownload:hover {
+  opacity: 1;
+}
+
+/* --- Centre play button and the play/pause pop --- */
+.chat-page .dcPlayCenter {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  inset: 0;
+  z-index: 1;
+  position: absolute;
+  pointer-events: none;
+}
+
+.chat-page .dcPlayCenterButton,
+.chat-page .dcPlayPausePop {
+  background-color: var(--opacity-black-60, rgba(0, 0, 0, .6));
+  border: 0;
+  border-radius: 50%;
+  box-sizing: content-box;
+  color: var(--white);
+  height: 24px;
+  width: 24px;
+  padding: 12px;
+  margin: 0;
+}
+
+.chat-page .dcPlayCenterButton {
+  cursor: pointer;
+  display: block;
+  pointer-events: auto;
+}
+
+.chat-page .dcPlayPausePop {
+  position: absolute;
+  top: 50%;
+  inset-inline-start: 50%;
+  margin-inline-start: -23px;
+  margin-top: -23px;
+  pointer-events: none;
+  z-index: 1;
+  animation: dcPlayPausePop 1s linear forwards;
+}
+
+.chat-page .dcPlayCenterButton svg,
+.chat-page .dcPlayPausePop svg {
+  display: block;
+  height: 24px;
+  width: 24px;
+}
+
+/* Discord's pop, scale and fade only: its rest transform is scale-only, so the
+   circle stays centred on the video through the whole animation. */
+@keyframes dcPlayPausePop {
+  0% { opacity: 0; transform: scale(1); }
+  10% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.5); }
+}
+
+/* --- Control bar --- */
+.chat-page .dcAudioControls,
+.chat-page .dcVideoControls {
+  align-items: center;
+  display: flex;
+  width: 100%;
+}
+
+.chat-page .dcAudioControls {
+  background-color: var(--opacity-black-40, rgba(0, 0, 0, .4));
+  border-radius: var(--radius-sm, 8px);
+  margin-top: 4px;
+}
+
+/* Discord: bottom -10px, 32px tall with 10px bottom padding, so the visible
+ * bar is the top 32px. Hidden = translated down past the wrapper edge. */
+.chat-page .dcVideoControls {
+  background-color: var(--opacity-black-60, rgba(0, 0, 0, .6));
+  bottom: -10px;
+  box-sizing: content-box;
+  height: 32px;
+  inset-inline: 0;
+  padding-bottom: 10px;
+  position: absolute;
+  z-index: 2;
+  transform: translateY(0);
+  transition: transform .35s cubic-bezier(.3, 1.1, .4, 1);
+}
+
+.chat-page .dcWrapperVideo.wrapperControlsHidden .dcVideoControls {
+  transform: translateY(100%);
+}
+
+.chat-page .dcControlButton,
+.chat-page .dcVolumeButton {
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm, 4px);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 0;
+  margin: 0;
+  padding: 8px;
+}
+
+/* Discord: hovering the control bar tints every control's hit area. */
+.chat-page .dcVideoControls:hover .dcControlButton,
+.chat-page .dcVideoControls:focus-within .dcControlButton,
+.chat-page .dcAudioControls:hover .dcControlButton,
+.chat-page .dcAudioControls:focus-within .dcControlButton,
+.chat-page .dcVolumeButton:hover {
+  background-color: var(--background-mod-muted);
+}
+
+.chat-page .dcVideoButton {
+  margin-inline-end: 8px;
+}
+
+/* controlIcon_cf09d8: 24x24 box with 4px padding (border-box), so the 16px
+ * glyph sits inside it as in Discord. */
+.chat-page .dcControlIcon {
+  align-items: center;
+  box-sizing: border-box;
+  color: var(--interactive-text-active);
+  cursor: pointer;
+  display: flex;
+  flex: 0 0 auto;
+  height: 24px;
+  justify-content: center;
+  padding: 4px;
+  width: 24px;
+}
+
+.chat-page .dcControlIcon svg {
+  display: block;
+  flex: none;
+}
+
+.chat-page .dcControlButton:hover .dcControlIcon,
+.chat-page .dcVolumeButton:hover .dcControlIcon {
+  color: var(--white);
+}
+
+.chat-page .dcControlButton:active .dcControlIcon,
+.chat-page .dcVolumeButton:active .dcControlIcon {
+  transform: translateY(1px);
+}
+
+.chat-page .dcDurationTimeWrapper {
+  color: var(--white);
+  flex: 0 0 auto;
+  white-space: nowrap;
+  height: 12px;
+  margin: 4px;
+}
+
+.chat-page .dcDurationTimeDisplay,
+.chat-page .dcDurationTimeSeparator {
+  display: inline-block;
+  font-family: var(--font-code, 'gg mono', Consolas, monospace);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 12px;
+  vertical-align: text-top;
+}
+
+.chat-page .dcDurationTimeSeparator {
+  margin: 0 2px;
+}
+
+/* --- Seek bar and volume pill (mediaBar_b26b79) --- */
+.chat-page .dcMediaBarInteraction {
+  align-items: center;
+  align-self: stretch;
+  cursor: pointer;
+  display: flex;
+  flex: 1 1 auto;
+  margin: 0 7px;
+  min-width: 0;
+  position: relative;
+}
+
+.chat-page .dcMediaBarWrapper {
+  background-color: hsl(var(--primary-300-hsl, 240 5% 69%) / .3);
+  flex: 1 1 auto;
+  height: 6px;
+  min-width: 0;
+  position: relative;
+}
+
+.chat-page .dcMediaBarInteraction:hover .dcMediaBarWrapper,
+.chat-page .dcMediaBarInteraction.dragging .dcMediaBarWrapper {
+  box-shadow: 0 1px 1px var(--opacity-black-28, rgba(0, 0, 0, .28));
+}
+
+.chat-page .dcMediaBarBuffer,
+.chat-page .dcMediaBarPreview,
+.chat-page .dcMediaBarProgress {
+  height: 100%;
+  inset-inline-start: 0;
+  position: absolute;
+  top: 0;
+}
+
+.chat-page .dcMediaBarBuffer {
+  background-color: var(--white);
+  opacity: .3;
+}
+
+.chat-page .dcMediaBarPreview {
+  background-color: var(--white);
+  opacity: 0;
+  z-index: 0;
+}
+
+.chat-page .dcMediaBarInteraction:hover .dcMediaBarPreview {
+  opacity: .3;
+}
+
+.chat-page .dcMediaBarProgress {
+  background-color: var(--brand-500);
+  z-index: 3;
+}
+
+.chat-page .dcMediaBarGrabber {
+  background-color: var(--brand-500);
+  border-radius: 5px;
+  cursor: grab;
+  height: 10px;
+  inset-inline-end: 0;
+  margin-inline-end: -5px;
+  margin-top: -5px;
+  position: absolute;
+  top: 50%;
+  transform: scale(0);
+  transform-origin: 50% 50%;
+  transition: transform .25s ease-in-out, background-color .25s linear;
+  width: 10px;
+  z-index: 2;
+}
+
+.chat-page .dcMediaBarInteraction:hover .dcMediaBarGrabber,
+.chat-page .dcMediaBarInteraction.dragging .dcMediaBarGrabber {
+  background-color: var(--brand-560, var(--brand-500));
+  transform: scale(1);
+}
+
+.chat-page .dcMediaBarBubble {
+  background-color: var(--black, #000);
+  border-radius: 3px;
+  color: var(--primary-100, #fff);
+  font-size: 12px;
+  font-weight: 600;
+  height: 18px;
+  line-height: 18px;
+  opacity: 0;
+  padding: 0 8px;
+  pointer-events: none;
+  position: absolute;
+  text-align: center;
+  top: -28px;
+  transform: translateX(-50%);
+  transition: opacity .2s ease-out;
+  white-space: nowrap;
+}
+
+.chat-page .dcMediaBarBubble::before {
+  border: 5px solid transparent;
+  border-top: 5px solid var(--black, #000);
+  content: "";
+  height: 0;
+  inset-inline-start: 50%;
+  margin-inline-start: -5px;
+  pointer-events: none;
+  position: absolute;
+  top: 100%;
+  width: 0;
+}
+
+.chat-page .dcMediaBarInteraction:hover .dcMediaBarBubble,
+.chat-page .dcMediaBarInteraction.dragging .dcMediaBarBubble {
+  opacity: 1;
+}
+
+/* Volume: a 72px pill (8px side padding) on a container rotated -90deg, so the
+ * track reads vertically; the slider opens above the button. */
+.chat-page .dcVolumeControl {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  position: relative;
+}
+
+.chat-page .dcVolumeButtonSlider {
+  bottom: calc(100% + 16px);
+  display: none;
+  inset-inline: -78px 0;
+  margin-bottom: 4px;
+  margin-inline-start: -4px;
+  pointer-events: none;
+  position: absolute;
+}
+
+.chat-page .dcVolumeButtonSlider.sliderVisible {
+  display: block;
+}
+
+.chat-page .dcMediaBar {
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.chat-page .dcMediaBarVertical {
+  align-items: center;
+  display: flex;
+  height: 54px;
+  transform: rotate(-90deg);
+  transform-origin: top;
+  width: 140px;
+}
+
+.chat-page .dcMediaBarInteractionVolume {
+  align-self: center;
+  background-color: var(--opacity-black-68, rgba(0, 0, 0, .68));
+  border-radius: 8px;
+  box-sizing: content-box;
+  flex: none;
+  margin-block: 0;
+  margin-inline: 0 4px;
+  padding: 4px 8px;
+  width: 72px;
+}
+
+.chat-page .dcMediaBarWrapperVolume {
+  display: flex;
+  flex: none;
+  justify-content: center;
+  width: 72px;
+}
+
+.chat-page .dcMediaBarInteractionVolume:hover .dcMediaBarGrabber {
+  background-color: var(--brand-560, var(--brand-500));
+  transform: scale(1);
+}

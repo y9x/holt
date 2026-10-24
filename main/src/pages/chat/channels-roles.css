@@ -1,0 +1,498 @@
+/* Discord "Channels & Roles" (ChannelsAndRoles.tsx) — ripped from the live
+ * web client's lazy chunks:
+ *   145006 guild-action row (wrapper__2ea32 / link__2ea32 basicChannelRowLink)
+ *   906659 section divider (sectionDivider__629e4)
+ *   981079 page (chat__0b563 / container__0b563 / tabBar__0b563) +
+ *          Customize (scroller__5d7c9 / prompt__5d7c9 / promptOptions__5d7c9)
+ *   184821 Browse (pageBody__41ed7 / categoryRow_e4503a / channelRow_e4503a)
+ *          + NUX card (container_bc0d35)
+ *   web    TabBar top/brand (top_aa8da2 item_aa8da2), Mana Switch
+ *          (switchIndicator_a28278), checkbox (checkboxIndicator__714a9),
+ *          TextInput (wrapper__72c38 / container__75098), overlay-primary
+ *          sm button (button__75098)
+ * Tokens resolve against discord-tokens.css (.chat-page, midnight); the few
+ * the token sheet lacks are defined below with their .theme-midnight values. */
+
+.chat-page {
+  --cr-input-border-default: hsl(var(--opacity-24-hsl)/0.23921568627450981);
+  --cr-input-border-active: hsl(var(--blurple-50-hsl)/1);
+  --cr-input-placeholder: hsl(var(--neutral-36-hsl)/1);
+  --cr-input-text: hsl(var(--neutral-12-hsl)/1);
+  --cr-switch-background-default: hsl(0 0% 0%/0.12156862745098039);
+  --cr-switch-border-default: hsl(var(--opacity-20-hsl)/0.2);
+  --cr-switch-border-hover: hsl(var(--opacity-40-hsl, 240 4% 60.784%)/0.4);
+  --cr-switch-background-selected: hsl(var(--blurple-50-hsl)/1);
+  --cr-switch-background-selected-hover: hsl(var(--blurple-60-hsl)/1);
+  --cr-switch-border-selected: hsl(var(--opacity-20-hsl)/0.2);
+  --cr-switch-thumb: hsl(var(--neutral-1-hsl)/1);
+  --cr-checkbox-border: hsl(240 calc(var(--saturation-factor, 1)*4%) 60.784%/0.6392156862745098);
+  --cr-checkbox-border-hover: hsl(240 calc(var(--saturation-factor, 1)*4%) 60.784%/0.8);
+  --cr-checkbox-background: hsl(0 0% 0%/0.0784313725490196);
+  --cr-checkbox-selected: hsl(var(--blurple-50-hsl)/1);
+  --cr-checkbox-selected-hover: hsl(var(--blurple-60-hsl)/1);
+  --cr-checkbox-selected-border: hsl(var(--opacity-20-hsl)/0.2);
+  --cr-overlay-primary-bg: hsl(var(--neutral-1-hsl)/1);
+  --cr-overlay-primary-bg-hover: hsl(var(--neutral-9-hsl, 240 5.085% 88.431%)/1);
+  --cr-overlay-primary-text: hsl(var(--neutral-100-hsl)/1);
+  --cr-overlay-primary-border: hsl(var(--opacity-20-hsl)/0.2);
+}
+
+/* --- Typography (Discord Text/Heading variants) --- */
+.chat-page .cr-heading-lg { font-family: var(--font-primary); font-size: 20px; font-weight: 600; line-height: 1.2; margin: 0; }
+.chat-page .cr-heading-md { font-family: var(--font-primary); font-size: 16px; font-weight: 600; line-height: 1.25; margin: 0; }
+.chat-page .cr-text-lg-medium { font-family: var(--font-primary); font-size: 20px; font-weight: 500; line-height: 1.2; margin: 0; }
+.chat-page .cr-text-md { font-family: var(--font-primary); font-size: 16px; font-weight: 400; line-height: 1.25; }
+.chat-page .cr-text-md-medium { font-family: var(--font-primary); font-size: 16px; font-weight: 500; line-height: 1.25; }
+.chat-page .cr-text-sm-medium { font-family: var(--font-primary); font-size: 14px; font-weight: 500; line-height: 1.2857142857142858; }
+.chat-page .cr-text-xs { font-family: var(--font-primary); font-size: 12px; font-weight: 400; line-height: 1.3333333333333333; }
+.chat-page .cr-c-strong { color: var(--text-strong); }
+.chat-page .cr-c-default { color: var(--text-default); }
+.chat-page .cr-c-muted { color: var(--text-muted); }
+.chat-page .cr-link { color: var(--text-link); cursor: pointer; text-decoration: none; }
+.chat-page .cr-link:hover { text-decoration: underline; }
+.chat-page .cr-visuallyHidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0; opacity: 0;
+}
+
+/* --- Sidebar: guild-action row (652793 → wrapper__2ea32 + link__2ea32) --- */
+.chat-page .cr-actionRows { list-style: none; margin: 0; padding: 0; }
+.chat-page .cr-sidebarRow { color: var(--channels-default); }
+.chat-page .cr-sidebarRow .cr-sidebarRowLink {
+  /* link__2ea32: padding space-xxs/space-xs around a 24px basicChannelRowLink
+     (min-height 24, gap space-xs) → 32px + the wrapper's 1px*2 = 34px pitch,
+     the same as the channel rows. */
+  padding-block: var(--space-4);
+  padding-inline: var(--space-xs);
+  min-height: 32px;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+}
+.chat-page .cr-sidebarRow .cr-sidebarRowIcon { color: var(--channel-icon); flex: 0 0 auto; display: block; }
+.chat-page .cr-sidebarRow .cr-sidebarRowName {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--channels-default);
+  line-height: var(--channels-name-line-height, 20px);
+}
+.chat-page .cr-sidebarRow:hover .cr-sidebarRowName { color: var(--interactive-text-hover); }
+.chat-page .cr-sidebarRow.d-channelInteractiveSelected .cr-sidebarRowName {
+  color: var(--interactive-text-active);
+  font-weight: var(--font-weight-medium, 500);
+}
+/* modeSelected keeps the icon at --channel-icon (not icon-strong). */
+.chat-page .cr-sidebarRow.d-channelInteractiveSelected .cr-sidebarRowIcon,
+.chat-page .cr-sidebarRow:active .cr-sidebarRowIcon { color: var(--channel-icon); }
+/* Section footer: 9px (visual refresh) with the divider hanging below. */
+.chat-page .cr-sectionFooter { flex: 0 0 auto; height: 9px; overflow: visible; }
+.chat-page .cr-sectionDivider {
+  background-color: var(--border-subtle);
+  height: 1px;
+  margin-top: calc(var(--space-sm) - 1px);
+  margin-inline-start: var(--space-md);
+  width: calc(100% - var(--space-md) - var(--space-md) + 9px);
+}
+
+/* --- Page shell (chat__0b563 / content_f75fb0 + container__0b563) --- */
+.chat-page .wrapper.cr-hidden { display: none !important; }
+.chat-page .cr-chat {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  position: relative;
+  background: var(--background-gradient-chat, var(--home-background));
+  background-color: var(--background-base-lower);
+  border-inline-start: 1px solid var(--border-subtle);
+}
+.chat-page .cr-header {
+  flex: 0 0 auto;
+  background: var(--background-gradient-chat, var(--home-background));
+  background-color: var(--background-base-lower);
+}
+.chat-page .cr-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  background: var(--background-gradient-chat, var(--home-background));
+  background-color: var(--background-base-lower);
+}
+
+/* TabBar type="top" look="brand" + tabBar__0b563 / tabBarItem__0b563. */
+.chat-page .cr-tabBar {
+  display: flex;
+  flex-direction: row;
+  flex: 0 0 auto;
+  border-bottom: 2px solid var(--border-subtle);
+  gap: 24px;
+  margin: 32px 32px 0;
+}
+.chat-page .cr-tabBarItem {
+  --selected-tab-item-color: var(--text-brand);
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  overflow: hidden;
+  padding-bottom: 16px;
+  margin-bottom: -1px;
+  position: relative;
+  cursor: pointer;
+  color: var(--text-subtle);
+  line-height: 14px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  outline: none;
+}
+.chat-page .cr-tabBarItem + .cr-tabBarItem { margin-left: var(--space-xl, 24px); }
+.chat-page .cr-tabBarItem:hover { color: var(--text-strong); }
+.chat-page .cr-tabBarItem.selected { color: var(--selected-tab-item-color); cursor: default; }
+.chat-page .cr-tabBarItem.selected::after,
+.chat-page .cr-tabBarItem:hover::after {
+  background: var(--selected-tab-item-color);
+  border-top-left-radius: 2px;
+  border-top-right-radius: 2px;
+  content: "";
+  height: 2px;
+  left: 0;
+  margin-top: -2px;
+  position: absolute;
+  top: 100%;
+  width: 100%;
+  z-index: 1;
+}
+.chat-page .cr-tabBarItem:focus-visible { box-shadow: 0 0 0 2px var(--focus-primary, hsl(var(--blurple-50-hsl)/1)) inset; border-radius: 4px; }
+.chat-page .cr-tabBarItemText {
+  font-family: var(--font-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: inherit;
+}
+
+/* --- Customize (981079 __5d7c9) --- */
+.chat-page .cr-scroller {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: row;
+  gap: var(--space-16);
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--space-32) var(--space-32) 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thin-thumb, hsl(var(--opacity-20-hsl)/0.2)) transparent;
+}
+.chat-page .cr-pageBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding-inline-end: var(--space-16);
+  min-width: 0;
+}
+.chat-page .cr-pageBody::after { border-bottom: 4px solid transparent; content: ""; }
+.chat-page .cr-prompt {
+  background-color: var(--background-surface-high);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-16);
+  position: relative;
+}
+.chat-page .cr-promptTitle { align-items: center; display: inline; color: var(--text-strong); }
+.chat-page .cr-required {
+  color: var(--text-feedback-critical);
+  margin-inline-start: var(--space-4);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color .3s ease-in-out;
+}
+.chat-page .cr-required.error { text-decoration-color: var(--text-feedback-critical); }
+/* promptOptions__5d7c9: 2 columns, 3 at >=1672px, 4 at >=2000px, 8px gap —
+   applied to Onboarding.tsx's option grid/dropdown inside a prompt card. */
+.chat-page .cr-promptOptions .dcOnbPromptOptions {
+  display: grid;
+  gap: var(--space-8);
+  grid-auto-rows: 1fr;
+  grid-template-columns: 1fr 1fr;
+  margin: 0;
+}
+@media (min-width: 1672px) { .chat-page .cr-promptOptions .dcOnbPromptOptions { grid-template-columns: 1fr 1fr 1fr; } }
+@media (min-width: 2000px) { .chat-page .cr-promptOptions .dcOnbPromptOptions { grid-template-columns: 1fr 1fr 1fr 1fr; } }
+.chat-page .cr-promptOptions .dcOnbSelect { margin-bottom: 0; }
+.chat-page .cr-helpText { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.chat-page .cr-helpText:empty { display: none; }
+.chat-page .cr-helpItem { color: var(--text-strong); font-weight: 500; }
+.chat-page .cr-emptyPage { display: flex; flex: 1; flex-direction: column; justify-content: center; }
+.chat-page .cr-emptyContainer { align-items: center; display: flex; flex-direction: column; justify-content: center; color: var(--text-default); }
+.chat-page .cr-emptyHeader { margin-bottom: var(--space-4); color: var(--text-strong); }
+
+/* --- Browse Channels (184821 __41ed7 / _e4503a) --- */
+.chat-page .cr-browsePage {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--space-16) var(--space-8);
+}
+.chat-page .cr-browseHeader {
+  display: flex;
+  gap: 16px;
+  margin-block: 0 var(--space-md);
+  margin-inline: var(--space-8) var(--space-24);
+}
+.chat-page .cr-browser {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thin-thumb, hsl(var(--opacity-20-hsl)/0.2)) transparent;
+}
+.chat-page .cr-browserInner { padding: 0 var(--space-8); }
+
+/* TextInput md + leading magnifier + clear (wrapper__72c38 / __75098). */
+.chat-page .cr-inputContainer { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; }
+.chat-page .cr-inputWrapper {
+  align-items: center;
+  background-color: var(--input-background-default);
+  border: 1px solid var(--cr-input-border-default);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+  color: var(--cr-input-text);
+  display: flex;
+  gap: var(--space-4);
+  height: 40px;
+  min-height: 40px;
+  position: relative;
+  transition: border-color .1s ease;
+  width: 100%;
+}
+.chat-page .cr-inputWrapper:has(input:focus) {
+  border-color: var(--cr-input-border-active);
+  outline: 2px solid var(--cr-input-border-active);
+  outline-offset: -2px;
+}
+.chat-page .cr-inputWrapper.cr-hasLeading { padding-inline-start: var(--space-4); }
+.chat-page .cr-inputIcon,
+.chat-page .cr-clearButton {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+.chat-page .cr-inputIcon { color: var(--icon-strong); }
+.chat-page .cr-clearButton { color: var(--icon-subtle); cursor: pointer; border-radius: var(--radius-sm); margin-inline-end: var(--space-4); }
+.chat-page .cr-clearButton:hover { color: var(--icon-strong); }
+.chat-page .cr-input {
+  background-color: transparent;
+  border: none;
+  box-sizing: border-box;
+  color: inherit;
+  flex: 1;
+  font-family: var(--font-primary);
+  font-size: 16px;
+  height: 100%;
+  line-height: 1.25;
+  min-width: 30%;
+  outline: none;
+  padding-inline: 0 var(--space-12);
+}
+.chat-page .cr-input::placeholder { color: var(--cr-input-placeholder); user-select: none; }
+
+/* Channel-browser NUX (734980 container_bc0d35). */
+.chat-page .cr-nux {
+  align-items: center;
+  background-color: var(--background-base-lowest);
+  border-radius: 8px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  padding: 16px;
+  position: relative;
+}
+.chat-page .cr-nuxContent { align-items: center; display: flex; }
+.chat-page .cr-nuxClose {
+  color: var(--interactive-text-default);
+  cursor: pointer;
+  inset-inline-end: 12px;
+  position: absolute;
+  top: 12px;
+  display: flex;
+}
+.chat-page .cr-nuxClose:hover { color: var(--interactive-text-hover); }
+.chat-page .cr-nuxImage { margin-bottom: -16px; margin-inline-end: 24px; flex: 0 0 auto; }
+.chat-page .cr-nuxHeading { align-items: center; display: flex; gap: 8px; margin-bottom: 8px; }
+.chat-page .cr-nuxTip { margin-top: 4px; }
+.chat-page .cr-nuxTip strong { font-weight: 600; }
+
+/* Category header (categoryRow_e4503a) + "Follow Category" FormSwitch
+   (container__5a838 data-layout=horizontal). */
+.chat-page .cr-categoryRow {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-md) 0 var(--space-xs);
+  gap: 16px;
+}
+.chat-page .cr-categoryRow.uncategorized { padding: 0 0 8px; }
+.chat-page .cr-categoryText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  min-width: 0;
+}
+.chat-page .cr-field {
+  align-items: center;
+  column-gap: var(--space-24);
+  display: grid;
+  grid-template-columns: auto auto;
+  flex: 0 0 auto;
+}
+.chat-page .cr-fieldLabel { cursor: pointer; user-select: none; }
+.chat-page .cr-fieldControl { display: flex; flex-direction: column; align-items: end; }
+
+/* Mana Switch (switchIndicator_a28278). */
+.chat-page .cr-switch { cursor: pointer; display: inline-flex; position: relative; }
+.chat-page .cr-switch[data-disabled] { cursor: not-allowed; opacity: .3; }
+.chat-page .cr-switchTrack {
+  background-color: var(--cr-switch-background-default);
+  border: 1px solid var(--cr-switch-border-default);
+  border-radius: var(--radius-lg, 16px);
+  box-sizing: border-box;
+  display: block;
+  height: 24px;
+  position: relative;
+  transition: background-color .15s ease, border-color .15s ease;
+  width: 48px;
+}
+.chat-page .cr-switch:hover .cr-switchTrack:not(.checked) { border-color: var(--cr-switch-border-hover); }
+.chat-page .cr-switchTrack.checked { background-color: var(--cr-switch-background-selected); border-color: var(--cr-switch-border-selected); }
+.chat-page .cr-switch:hover .cr-switchTrack.checked { background-color: var(--cr-switch-background-selected-hover); }
+.chat-page .cr-switchThumb {
+  color: var(--cr-switch-thumb);
+  height: 24px;
+  left: 1px;
+  margin-left: -1px;
+  margin-top: -1px;
+  position: absolute;
+  top: 0;
+  transition: left .2s cubic-bezier(.4, 0, .2, 1);
+  width: 24px;
+}
+.chat-page .cr-switchTrack.checked .cr-switchThumb { left: 24px; }
+.chat-page .cr-switch:has(input:focus-visible) .cr-switchTrack { outline: 2px solid var(--focus-primary, hsl(var(--blurple-50-hsl)/1)); outline-offset: 2px; }
+
+/* Channel rows (channelRow_e4503a). */
+.chat-page .cr-channelRow {
+  align-items: center;
+  background-color: var(--background-base-low);
+  border: 1px solid var(--border-subtle);
+  border-bottom: none;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  max-width: 100%;
+  min-height: 36px;
+  padding: var(--space-xs) var(--space-sm);
+  outline: none;
+}
+.chat-page .cr-channelRow:not(.disabled) { cursor: pointer; }
+.chat-page .cr-channelRow:hover:not(.disabled) { background-color: var(--background-mod-subtle); }
+.chat-page .cr-channelRow:focus-visible { box-shadow: 0 0 0 2px var(--focus-primary, hsl(var(--blurple-50-hsl)/1)) inset; }
+.chat-page .cr-channelRow.first { border-start-end-radius: var(--radius-sm); border-start-start-radius: var(--radius-sm); }
+.chat-page .cr-channelRow.last {
+  border-bottom: 1px solid var(--border-subtle);
+  border-end-end-radius: var(--radius-sm);
+  border-end-start-radius: var(--radius-sm);
+}
+.chat-page .cr-channelInfo { display: flex; flex-direction: column; flex-shrink: 1; gap: 4px; overflow: hidden; min-width: 0; }
+.chat-page .cr-channelName {
+  align-items: center;
+  display: flex;
+  gap: var(--space-xs);
+  margin-inline-end: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-page .cr-channelIcon { color: var(--channel-icon); flex: 0 0 auto; }
+.chat-page .cr-channelText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-page .cr-channelSubtitles { display: flex; margin-inline-end: 16px; overflow: hidden; color: var(--text-default); }
+.chat-page .cr-topic { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-page .cr-channelActions { align-items: center; display: flex; flex-shrink: 0; }
+.chat-page .cr-rowSeparator { background-color: var(--border-subtle); display: none; height: 1px; margin: -1px 16px 0; }
+/* The hover "View" button (viewChannelButtonWrapper_e4503a → Button size
+   "sm", variant "overlay-primary" — Discord's white overlay button; verified
+   against web chunk 472165). Discord toggles the wrapper display:none →
+   block, so the 32px button grows a topic-less 36px row (8px padding + 20px
+   name line) on hover and the list jumps as the pointer moves. Here the
+   button never affects layout: its width is reserved at rest (visibility
+   toggle, so hover doesn't re-truncate names either) and negative block
+   margins equal to the row's vertical padding make it contribute 32 - 2*8 =
+   16px (< the 20px name line) to the row height; it overhangs into the
+   padding, still centered. */
+.chat-page .cr-viewButtonWrapper {
+  display: block;
+  margin-block: calc(var(--space-xs) * -1);
+  margin-inline-end: 16px;
+  visibility: hidden;
+}
+.chat-page .cr-channelRow:focus-within .cr-viewButtonWrapper,
+.chat-page .cr-channelRow:hover .cr-viewButtonWrapper { visibility: visible; }
+
+/* Button overlay-primary sm (button__75098). */
+.chat-page .cr-button {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  font-family: var(--font-primary);
+  justify-content: center;
+  margin: 0;
+  min-height: 32px;
+  min-width: 60px;
+  padding: calc(var(--space-4) - 1px + 1px) calc(var(--space-12) - 1px);
+  transition: background-color .15s ease-out, color .15s ease-out, border-color .15s ease-out;
+}
+.chat-page .cr-buttonOverlayPrimary {
+  background-color: var(--cr-overlay-primary-bg);
+  border-color: var(--cr-overlay-primary-border);
+  color: var(--cr-overlay-primary-text);
+}
+.chat-page .cr-buttonOverlayPrimary:hover { background-color: var(--cr-overlay-primary-bg-hover); }
+.chat-page .cr-buttonChildren { font-size: 14px; font-weight: 500; line-height: 16px; white-space: nowrap; }
+
+/* Checkbox indicator (checkboxIndicator__714a9, usageVariant indicator). */
+.chat-page .cr-checkboxOption { display: inline-flex; }
+.chat-page .cr-checkboxOption[data-disabled] { opacity: .5; }
+.chat-page .cr-checkboxIndicator {
+  align-items: center;
+  background-color: var(--cr-checkbox-background);
+  border: 1px solid var(--cr-checkbox-border);
+  border-radius: var(--radius-xs, 4px);
+  box-sizing: border-box;
+  color: var(--white, #fff);
+  display: flex;
+  flex: 0 0 auto;
+  height: 20px;
+  justify-content: center;
+  position: relative;
+  width: 20px;
+}
+.chat-page .cr-checkboxOption[data-selected] .cr-checkboxIndicator { background-color: var(--cr-checkbox-selected); border-color: var(--cr-checkbox-selected-border); }
+.chat-page .cr-channelRow:hover:not(.disabled) .cr-checkboxOption:not([data-selected]) .cr-checkboxIndicator { border-color: var(--cr-checkbox-border-hover); }
+.chat-page .cr-channelRow:hover:not(.disabled) .cr-checkboxOption[data-selected] .cr-checkboxIndicator { background-color: var(--cr-checkbox-selected-hover); }
+.chat-page .cr-checkmark { display: block; height: 100%; inset: 0; position: absolute; width: 100%; }

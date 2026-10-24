@@ -1,0 +1,84 @@
+.home-background-disabled .workspace-background{display:none}
+:root, :host{--font-ui:"Instrument Sans",-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif;--font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-family:var(--font-ui);color:#f5f5f5;background:#000;font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;color-scheme:dark;--surface:#0a0a0a;--control:#191919;--muted:#808080;--ui-bg:#0a0a0a;--ui-surface:#151515;--ui-glass:rgba(255,255,255,.05);--ui-glass-2:rgba(255,255,255,.1);--ui-glass-3:rgba(255,255,255,.16);--ui-glass-hover:rgba(255,255,255,.08);--ui-border:rgba(255,255,255,.13);--ui-border-strong:rgba(255,255,255,.3);--ui-text:#f2f2f2;--ui-text-muted:#9a9a9a;--ui-text-subtle:#6a6a6a;--ui-white:#fff;--ui-accent:#fff}*{box-sizing:border-box;scrollbar-width:none}*::-webkit-scrollbar{display:none;width:0;height:0}html,body,#root,:host{width:100%;height:100%;overflow:hidden}body{margin:0;min-width:280px}button,input,select,textarea{font:inherit}button,input,select,textarea{transition:border-color .16s ease,background-color .16s ease,color .16s ease,transform .16s ease,opacity .16s ease}button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}button{cursor:pointer;color:inherit;border:0;background:none;user-select:none;-webkit-user-select:none}a{color:inherit}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none}h1,h2,p{margin:0}svg{flex-shrink:0}::selection{background:#444}button,a{transition:background .15s,color .15s,transform .16s ease}button:not(:disabled):active{transform:scale(.97)}button:disabled{cursor:default}.app-bg{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:var(--ui-bg)}.app-bg-grid{position:absolute;inset:-1px;background-image:linear-gradient(to right,color-mix(in srgb,var(--ui-accent) 16%,transparent) 1px,transparent 1px),linear-gradient(to bottom,color-mix(in srgb,var(--ui-accent) 16%,transparent) 1px,transparent 1px);background-size:46px 46px;mask-image:radial-gradient(115% 85% at 50% 34%,#000 0%,rgba(0,0,0,.55) 45%,transparent 78%);opacity:.7;animation:grid-settle .55s ease both}@keyframes grid-settle{from{opacity:0;transform:scale(1.015)}to{opacity:.7;transform:scale(1)}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
+input[type='range'] {
+  accent-color: #fff;
+  height: 4px;
+  border-radius: 999px;
+  background: #333;
+  -webkit-appearance: none;
+  appearance: none;
+}
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: #333;
+}
+input[type='range']::-webkit-slider-thumb {
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  -webkit-appearance: none;
+  appearance: none;
+}
+input[type='range']::-moz-range-track { height: 4px; border-radius: 999px; background: #333; }
+input[type='range']::-moz-range-progress { height: 4px; border-radius: 999px; background: #fff; }
+input[type='range']::-moz-range-thumb { width: 13px; height: 13px; border: 0; border-radius: 50%; background: #fff; }
+input[type='range']:disabled::-webkit-slider-thumb { background: #6a6a6a; }
+input[type='range']:disabled::-moz-range-thumb { background: #6a6a6a; }
+
+/* :host matters for the SVG/foreignObject cloak shadow root — without it,
+   theme tokens only exist on the light-document <html> and the app looks unthemed. */
+:root, :host {
+  --theme-bg: #000000;
+  --theme-accent: #ffffff;
+  --theme-fg: #f2f2f2;
+  --theme-on-accent: #000000;
+  --shell-bg: var(--theme-bg);
+  --shell-surface: color-mix(in srgb, var(--theme-bg) 96%, var(--theme-fg));
+  --shell-raised: color-mix(in srgb, var(--theme-bg) 93%, var(--theme-fg));
+  --shell-popover: color-mix(in srgb, var(--theme-bg) 93%, var(--theme-fg));
+  --shell-hover: color-mix(in srgb, var(--theme-bg) 91%, var(--theme-fg));
+  --shell-line: color-mix(in srgb, var(--theme-bg) 90%, var(--theme-fg));
+  --shell-line-strong: color-mix(in srgb, var(--theme-bg) 82%, var(--theme-fg));
+  --shell-text: var(--theme-fg);
+  --shell-muted: color-mix(in srgb, var(--theme-fg) 52%, var(--theme-bg));
+  --shell-faint: color-mix(in srgb, var(--theme-fg) 30%, var(--theme-bg));
+  --shell-accent: var(--theme-accent);
+  --shell-on-accent: var(--theme-on-accent);
+  --ui-bg: var(--shell-surface);
+  --ui-surface: var(--shell-raised);
+  --ui-glass: color-mix(in srgb, var(--theme-fg) 5%, transparent);
+  --ui-glass-2: color-mix(in srgb, var(--theme-fg) 10%, transparent);
+  --ui-glass-3: color-mix(in srgb, var(--theme-fg) 16%, transparent);
+  --ui-glass-hover: color-mix(in srgb, var(--theme-fg) 8%, transparent);
+  --ui-border: color-mix(in srgb, var(--theme-fg) 13%, transparent);
+  --ui-border-strong: color-mix(in srgb, var(--theme-fg) 30%, transparent);
+  --ui-text: var(--theme-fg);
+  --ui-text-muted: var(--shell-muted);
+  --ui-text-subtle: color-mix(in srgb, var(--theme-fg) 42%, var(--theme-bg));
+  --ui-white: var(--theme-fg);
+  --ui-accent: var(--theme-accent);
+  --surface: var(--shell-surface);
+  --control: var(--shell-raised);
+  --muted: var(--shell-muted);
+  color: var(--theme-fg);
+  background: var(--theme-bg);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--theme-accent) 35%, var(--theme-bg));
+}
+
+/* Match Song: cross-fade the shell when the track (and its palette) changes. */
+.browser-shell,
+.workspace,
+body {
+  transition: background-color 0.55s ease, color 0.55s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .browser-shell, .workspace, body { transition: none; }
+}

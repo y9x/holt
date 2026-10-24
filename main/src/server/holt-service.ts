@@ -92,7 +92,7 @@ function loadEmbedShell(): EmbedShell {
 function platformBlock(platform: Platform, mode: EmbedMode): string {
   // tokenStorageKey is a key name, not a secret: the page reads the token itself on the platform's origin.
   const tokenStorageKey = mode === 'proxy' ? platform.userState?.tokenStorageKey ?? null : null
-  const data = JSON.stringify({ id: platform.id, name: platform.name, mode, origins: platform.allowedOrigins, links: platform.links, tokenStorageKey })
+  const data = JSON.stringify({ id: platform.id, name: platform.name, mode, origins: platform.allowedOrigins, links: platform.links, tokenStorageKey, chat: mode === 'proxy' && platform.chat })
   return `<script type="application/json" id="holt-platform">${data.replace(/</g, '\\u003c')}</script>`
 }
 
@@ -102,6 +102,9 @@ function pageHtml(shell: EmbedShell, platform: Platform, mode: EmbedMode): strin
 }
 
 function embedCsp(platform: Platform, shell: EmbedShell, mode: EmbedMode): string {
+  // The chatbox shows Discord CDN images, video and audio, GIF search results (klipy) and link embeds
+  // (YouTube, Spotify, ... in iframes). Scripts stay 'self' plus the build's own inline hashes either way.
+  const chat = mode === 'proxy' && platform.chat
   return [
     // Proxied, the page is the platform's own top-level page; framed, only the platform's origins may frame it.
     mode === 'proxy' ? "frame-ancestors 'self'" : frameAncestors(platform),
@@ -109,8 +112,9 @@ function embedCsp(platform: Platform, shell: EmbedShell, mode: EmbedMode): strin
     `script-src 'self' ${shell.scriptHashes.join(' ')}`.trim(),
     // HolyText's ellipsis mode injects a <style> into its shadow root.
     "style-src 'self' 'unsafe-inline'",
-    'img-src https: data:',
-    "connect-src 'self'",
+    chat ? 'img-src https: data: blob:' : 'img-src https: data:',
+    chat ? "connect-src 'self' https://api.klipy.com" : "connect-src 'self'",
+    ...(chat ? ['media-src https: data: blob:', 'frame-src https:', "font-src 'self' data:"] : []),
     "base-uri 'none'",
     "form-action 'none'",
     "object-src 'none'",

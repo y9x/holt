@@ -1,0 +1,137 @@
+/* ==========================================================================
+   Chat backdrop — the site background (App.tsx .workspace-background) shows
+   through the chat the same way it does on the AI page (pages/ai/ai.css):
+     .abulxt-ai          rgba(4,4,5,.28)                    -> chat root
+     .abulxt-ai-sidebar  rgba(0,0,0,.42) + blur(10px)       -> guild rail + channel sidebar
+     .abulxt-ai-main     transparent                        -> chat column / message list
+     main > header       transparent + hairline border      -> channel header
+     .abulxt-composer    solid                              -> chat bar stays solid (untouched)
+   Every selector is prefixed with `.workspace` so it only matches the live
+   chat root (never the body-level overlay/select hosts, which also carry
+   .chat-page) and out-specifies the base .chat-page rules regardless of CSS
+   load order. Popouts, context menus, modals, tooltips, pickers, listboxes,
+   the search results panel and the image modal keep their opaque tokens —
+   no background tokens are redefined here, only the big pane surfaces.
+   Geometry is unchanged.
+   ========================================================================== */
+
+/* Root tint (AI .abulxt-ai). */
+.workspace .chat-page:not(.dcOverlayBody) {
+  background: rgba(4, 4, 5, 0.28);
+}
+
+/* One blurred backdrop pane behind the guild rail + channel sidebar (AI
+   sidebar treatment). It lives on the root's ::before (z-index:-1 inside the
+   root's own stacking context) instead of on .guilds/.bar so that neither
+   pane becomes a containing block for fixed/absolute descendants, it spans the
+   full height (incl. the rail's bottom clearance under the user panel), and
+   only ONE backdrop-filter is composited. Width tracks the resizable
+   sidebar. */
+.workspace .chat-page:not(.dcOverlayBody)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: 0;
+  width: calc(var(--custom-guild-list-width) + var(--chat-sidebar-width, 240px));
+  z-index: -1;
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+/* Chat column backdrop (AI .abulxt-ai-main: transparent + blur(4px)). Same
+   ::pseudo technique, covering everything right of the sidebar (message
+   column, Channels & Roles page, search results), so .wrapper never becomes a
+   containing block for its fixed/absolute overlays. */
+.workspace .chat-page:not(.dcOverlayBody)::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-end: 0;
+  inset-inline-start: calc(var(--custom-guild-list-width) + var(--chat-sidebar-width, 240px));
+  z-index: -1;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  /* chat.css collapses .bar to 56px here. */
+  .workspace .chat-page:not(.dcOverlayBody)::before {
+    width: calc(var(--custom-guild-list-width) + 56px);
+  }
+  .workspace .chat-page:not(.dcOverlayBody)::after {
+    inset-inline-start: calc(var(--custom-guild-list-width) + 56px);
+  }
+}
+
+.workspace .chat-page .guilds,
+.workspace .chat-page .bar {
+  background: transparent;
+}
+
+/* User panel: the channel list ends above it (bar-scroller margin-bottom), so
+   only the blurred backdrop sits behind — a darker translucent card keeps
+   the name/status legible. Border/radius/size unchanged. */
+.workspace .chat-page .panels {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* Chat column + message list (AI .abulxt-ai-main: transparent). The 1px
+   sidebar seam (border-inline-start) stays. */
+.workspace .chat-page .wrapper,
+.workspace .chat-page .messages {
+  background: transparent;
+}
+
+/* Channel header (AI header: transparent, hairline border-bottom kept from
+   the vendored rule). --__header-bar-background also feeds the topic's
+   overflow fade (.d-headerChildren:after) — transparent so it never paints a
+   black block at the right edge. */
+.workspace .chat-page .d-headerContainer.d-headerThemed {
+  --__header-bar-background: transparent;
+  background: transparent;
+}
+
+/* Bottom fade above the chat bar: Discord fades the list into the solid chat
+   background; over the dot field that reads as a dark strip, so the resting
+   and at-bottom typing fades are dropped. Scrolled away from the present
+   while someone types, history slides under the "is typing" strip, so keep a
+   soft translucent wash there for legibility (not a solid band). */
+.workspace .chat-page .inputFields::before,
+.workspace .chat-page .inputFields.isTyping::before {
+  background: none;
+}
+
+.workspace .chat-page .messages.notAtBottom ~ .inputFields.isTyping::before {
+  background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.55) 72px, rgba(0, 0, 0, 0.55) 100%);
+}
+
+/* Day divider: the pill used an opaque chat-colored background to mask the
+   full-width line behind it. With a see-through chat that would be a black
+   chip, so draw the line as two flex segments either side of the pill
+   instead (same vertical centering; pill stays centered, unmasked). */
+.workspace .chat-page .chat-day-divider::before,
+.workspace .chat-page .chat-day-divider::after {
+  content: '';
+  position: static;
+  flex: 1 1 0;
+  height: 0;
+  border-top: 1px solid var(--border-strong);
+}
+
+.workspace .chat-page .chat-day-divider span {
+  margin-inline: 0;
+  background: transparent;
+}
+
+/* Channels & Roles / Browse Channels page (sibling of .wrapper): translucent
+   like the chat column; its cards keep their own opaque fills. */
+.workspace .chat-page .cr-chat,
+.workspace .chat-page .cr-header,
+.workspace .chat-page .cr-content {
+  background: transparent;
+}

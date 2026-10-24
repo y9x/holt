@@ -1,0 +1,480 @@
+/* Server rail: folders + drag-to-reorder (GuildRail.tsx). Values are Discord's
+   visual-refresh rail (css/818860.f95fc570d91bd2f3.css, all.css L1555 and
+   ~L1941-1943, pill module 354001), scaled to this build's 40px icon:
+   folder tile 40px / radius 12px, 2x2 grid 3px padding + 2px gap → 16px mini
+   icons, open-folder column 48px / radius 16px, 150ms ease-out folder motion.
+   Base .guild / .guild-pill / .guild-mention-badge rules live in chat.css. */
+
+.chat-page .guilds {
+  position: relative; /* positions the drop bar / dot */
+  user-select: none;
+}
+
+.chat-page .guilds.reordering,
+.chat-page .guilds.reordering .guild {
+  cursor: grabbing;
+}
+
+/* A root server keeps chat.css's .guild box; its wrapper adds no box. */
+.chat-page .guild-item {
+  display: contents;
+}
+
+/* ---- folder ---------------------------------------------------------------- */
+
+.chat-page .guild-folder {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: var(--guildbar-avatar-size);
+  margin-bottom: 8px;
+}
+
+/* Open: 4px of column above the header (folderHeaderSmall margin -4px → 0). */
+.chat-page .guild-folder.expanded {
+  padding-top: 4px;
+}
+
+.chat-page .guild-folder > .guild.guild-folder-button {
+  margin-bottom: 0;
+}
+
+/* The open folder's background column (.folderGroupBackground). */
+.chat-page .guild-folder-bg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 48px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-muted);
+  border-radius: 16px;
+  background: var(--background-mod-subtle);
+  pointer-events: none;
+  animation: guild-folder-fade 150ms ease-out;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+.chat-page .guild-folder.colored .guild-folder-bg {
+  background: color-mix(in srgb, var(--custom-folder-color) 15%, transparent);
+}
+
+/* The folder tile: a clipped 2-tile strip, glyph on top and the server grid
+   below; closed shows the grid, open slides the glyph into view. */
+.chat-page .guild-folder-inner {
+  display: block;
+  width: var(--guildbar-avatar-size);
+  height: var(--guildbar-avatar-size);
+  overflow: hidden;
+  border-radius: 12px;
+  transition: background-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+
+.chat-page .guild-folder-strip {
+  display: flex;
+  flex-direction: column;
+  transform: translate3d(0, calc(-1 * var(--guildbar-avatar-size)), 0);
+  transition: transform 150ms ease-out;
+}
+
+.chat-page .guild-folder.expanded .guild-folder-strip {
+  transform: translate3d(0, 0, 0);
+}
+
+.chat-page .guild-folder-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--guildbar-avatar-size);
+  height: var(--guildbar-avatar-size);
+  border-radius: 12px;
+  color: var(--custom-folder-color, var(--background-brand));
+  transition: background-color 150ms ease-out;
+}
+
+.chat-page .guild-folder-button:hover .guild-folder-glyph {
+  background: color-mix(in srgb, var(--white, #fff) 12%, transparent);
+}
+
+/* The 2x2 server grid (.folderPreviewWrapper): folder color at 40%, else
+   --background-mod-subtle; first four servers, empty cells left blank. */
+.chat-page .guild-folder-preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 2px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: var(--guildbar-avatar-size);
+  height: var(--guildbar-avatar-size);
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--background-mod-subtle);
+}
+
+.chat-page .colored .guild-folder-preview,
+.chat-page .colored.guild-folder-preview {
+  background: color-mix(in srgb, var(--custom-folder-color) 40%, transparent);
+}
+
+.chat-page .guild-folder-mini {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+/* Outer corners 10px, inner 4px. */
+.chat-page .guild-folder-mini:nth-child(1) { border-radius: 10px 4px 4px; }
+.chat-page .guild-folder-mini:nth-child(2) { border-radius: 4px 10px 4px 4px; }
+.chat-page .guild-folder-mini:nth-child(3) { border-radius: 4px 4px 4px 10px; }
+.chat-page .guild-folder-mini:nth-child(4) { border-radius: 4px 4px 10px; }
+
+.chat-page .guild-folder-mini img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: cover;
+}
+
+.chat-page .guild-mini-acronym {
+  background-color: var(--background-mod-subtle);
+  color: var(--text-default);
+  font-size: 7px;
+  font-weight: var(--font-weight-medium, 500);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Folder pill: unread / hover as usual, 40px while a hidden child is the open
+   server; disabled entirely while the folder is open (children get pills). */
+.chat-page .guilds .guild.folder-selected .guild-pill {
+  height: 40px;
+}
+
+.chat-page .guilds .guild-folder.expanded > .guild.guild-folder-button .guild-pill {
+  height: 0;
+}
+
+/* ---- open folder's server list ---------------------------------------------- */
+
+.chat-page .guild-folder-items {
+  /* Full rail width so the children's edge pills aren't clipped. */
+  width: var(--custom-guild-list-width);
+  overflow: hidden;
+  transition: height 150ms ease-out;
+}
+
+.chat-page .guild-folder-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+}
+
+.chat-page .guild-folder-item {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.chat-page .guild-folder-item > .guild {
+  margin-bottom: 0;
+  transition: transform 150ms ease-out;
+}
+
+.chat-page .guild-folder-items[data-state='enter'] .guild-folder-item > .guild,
+.chat-page .guild-folder-items[data-state='exit'] .guild-folder-item > .guild {
+  transform: scale(0);
+}
+
+/* The folder-end drop zone's spacer: 0 → 24px while hovered (the -8px cancels
+   the list gap so the closed spacer adds nothing). */
+.chat-page .guild-folder-end {
+  height: 0;
+  margin-top: -8px;
+  transition: height 150ms ease-out;
+}
+
+.chat-page .guild-folder.end-target .guild-folder-end {
+  height: 32px;
+}
+
+/* ---- drag ---------------------------------------------------------------------- */
+
+/* The dragged slot stays as Discord's dashed placeholder (.dragInner). */
+.chat-page .guild.dragging .guild-pill,
+.chat-page .guild.dragging .guild-icon,
+.chat-page .guild.dragging .guild-folder-inner,
+.chat-page .guild.dragging .guild-mention-badge {
+  visibility: hidden;
+}
+
+.chat-page .guild.dragging::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: var(--guildbar-avatar-size);
+  height: var(--guildbar-avatar-size);
+  border: 1px dashed var(--border-subtle);
+  border-radius: 12px;
+  background: var(--background-mod-normal);
+}
+
+.chat-page .guild-folder.dragging .guild-folder-bg {
+  display: none;
+}
+
+/* Insert bar (.target_d144f8.dragOver:before): 4px green bar 6px above the
+   target icon, inset 4px. */
+.chat-page .guild-drop-indicator {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--green-360, #23a55a);
+  box-shadow: 0 0 3px var(--opacity-black-28);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Combine dot (.centerTarget): 16px green circle at the rail edge. */
+.chat-page .guild-drop-dot {
+  position: absolute;
+  left: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--green-360, #23a55a);
+  box-shadow: 0 0 3px var(--opacity-black-28);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Server held over a root server: after 70ms it shows the new-folder preview. */
+.chat-page .guild.combine-ready .guild-icon {
+  visibility: hidden;
+}
+
+.chat-page .guild-combine-preview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+/* A closed folder receiving a server: green 28% fill + 1px green outline. */
+.chat-page .guild-folder.drop-target:not(.expanded) .guild-folder-inner {
+  background-color: color-mix(in srgb, var(--green-360, #23a55a) 28%, transparent);
+  box-shadow: inset 0 0 0 1px var(--green-360, #23a55a);
+}
+
+.chat-page .guild-folder.drop-target:not(.expanded) .guild-folder-preview {
+  background: transparent;
+}
+
+/* An open folder receiving a server: its column turns green. */
+.chat-page .guild-folder.expanded.drop-target .guild-folder-bg {
+  background: color-mix(in srgb, var(--green-360, #23a55a) 28%, transparent);
+  border-color: var(--green-360, #23a55a);
+}
+
+/* The pointer ghost: a copy of the dragged icon / folder grid. */
+.chat-page .guild.guild-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  margin: 0;
+  opacity: 0.8;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.chat-page .guild.guild-ghost[hidden] {
+  display: none;
+}
+
+@keyframes guild-folder-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Discord plays these only under .full-motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-page .guild.combine-target,
+  .chat-page .guild-folder.drop-target:not(.expanded) > .guild-folder-button {
+    animation: guild-wobble 0.2s infinite;
+    transform-origin: 50% 30%;
+  }
+
+  .chat-page .guild-combine-preview .guild-folder-mini:nth-child(2) {
+    animation: guild-combine-in 100ms ease-out;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-page .guild-folder-bg,
+  .chat-page .guild-folder-inner,
+  .chat-page .guild-folder-strip,
+  .chat-page .guild-folder-items,
+  .chat-page .guild-folder-item > .guild,
+  .chat-page .guild-folder-end {
+    animation: none;
+    transition: none;
+  }
+}
+
+@keyframes guild-wobble {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(2deg); }
+  75% { transform: rotate(-2deg); }
+}
+
+@keyframes guild-combine-in {
+  from { transform: translate3d(10px, 10px, 0) scale3d(3, 3, 1); }
+  to { transform: none; }
+}
+
+/* ---- Folder Settings modal (FolderSettingsModal.tsx) ----------------------------
+   Shell is the shared gnm* modal; the name input is Discord's TextInput (40px,
+   8px radius, --input-background-default + --input-border-default) and the
+   color picker is Discord's ColorPicker (lazy/269714.css): 66x50 default and
+   custom swatches, then 20px presets in two rows with 10px gaps. */
+.chat-page .gnmModal.gfsModal {
+  /* Two 66px swatches + ten 20px presets with Discord's 10px gaps. */
+  max-width: 500px;
+}
+
+.chat-page .gfsForm {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.chat-page .gfsModal .gnmField {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+.chat-page .gfsModal .gnmSection + .gnmSection {
+  margin-top: 20px;
+}
+
+.chat-page .gfsInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: 40px;
+  padding: 10px;
+  border: 1px solid var(--input-border-default);
+  border-radius: 8px;
+  background: var(--input-background-default);
+  color: var(--text-default);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+  transition: border-color 0.2s ease-in-out;
+}
+
+.chat-page .gfsInput::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-page .gfsInput:focus {
+  border-color: var(--text-link, var(--background-brand));
+}
+
+.chat-page .gfsPicker {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 8px;
+}
+
+.chat-page .gfsSwatch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  margin: 0 10px 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.chat-page .gfsSwatch:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-primary, var(--background-brand));
+}
+
+.chat-page .gfsSwatchLarge {
+  width: 66px;
+  height: 50px;
+  border-radius: 8px;
+}
+
+/* Custom swatch: outlined until a custom color is picked, pencil top-right. */
+.chat-page .gfsSwatchCustom {
+  border: 1px solid var(--border-normal);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.chat-page .gfsSwatchCustom.selected {
+  border-color: transparent;
+}
+
+.chat-page .gfsPencil {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+/* The browser's color picker opens from anywhere on the custom swatch. */
+.chat-page .gfsNativeColor {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.chat-page .gfsPresets {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-page .gfsPresetRow {
+  display: flex;
+  height: 20px;
+}
+
+.chat-page .gfsPresetRow .gfsSwatch:last-child {
+  margin-right: 0;
+}
+
+.chat-page .gfsPresetRow + .gfsPresetRow {
+  margin-top: 10px;
+}

@@ -1,0 +1,1497 @@
+/* Discord message accessories — embeds, attachment mosaics, file cards, media
+   players, text previews, spoilers, alt text, image modal and the masked-link
+   ("Leaving Discord") modal. Values are ported from Discord's live CSS
+   modules (class map → our dc* names):
+     embed__623de / embedFull / grid / gridContainer / embedThumbnail …  (198496)
+     oneByOneGrid_f4758a / oneByTwoGrid / twoByTwoGrid / threeByThreeGrid (588035)
+     fileWrapper__0ccae / file / fileNameLink / metadata                 (797845)
+     wrapperAudio_cf09d8 / audioControls / videoControls / metadata      (505634)
+     mediaBarWrapper_b26b79 …                                             (64097)
+     textContainer__4d95d / codeView / footer                             (267526)
+     spoilerContent__299eb / spoilerWarning / obscureWarning             (880150)
+     mediaMosaicAltText__0f481 / popout                                   (247917)
+     container_b7e1cb (message accessories)                               (324520)
+     wrapper__926d7 (video play pill)                                     (567999) */
+
+.chat-page {
+  --dc-spoiler-bg-hidden: var(--spoiler-hidden-background, hsl(var(--neutral-72-hsl, 240 4% 16%)/1));
+  --dc-spoiler-bg-hidden-hover: var(--spoiler-hidden-background-hover, hsl(var(--neutral-69-hsl, 240 4% 20%)/1));
+  --dc-spoiler-bg-revealed: var(--background-mod-subtle);
+  --dc-spoiler-warning-text: hsl(var(--neutral-12-hsl, 240 5% 86%)/1);
+  --dc-spoiler-warning-bg: var(--opacity-black-60, rgba(0, 0, 0, .6));
+  --dc-spoiler-warning-bg-hover: rgba(0, 0, 0, .88);
+  --dc-spoiler-blur: 44px;
+}
+
+/* --- Message accessories container (container_b7e1cb) --- */
+.chat-page .dcAccessories {
+  display: grid;
+  grid-auto-flow: row;
+  height: fit-content;
+  grid-row-gap: .25rem;
+  grid-template-columns: repeat(auto-fill, minmax(100%, 1fr));
+  min-height: 0;
+  min-width: 0;
+  padding-bottom: .125rem;
+  padding-top: .125rem;
+  position: relative;
+  text-indent: 0;
+  white-space: normal;
+  font-size: 1rem;
+  line-height: 1.375rem;
+}
+
+.chat-page.compact .dcAccessories {
+  display: grid;
+}
+
+/* --- Embed card (embed__623de / embedFull) --- */
+.chat-page .dcEmbed {
+  border-radius: 4px;
+  box-sizing: border-box;
+  display: grid;
+  max-width: max-content;
+  position: relative;
+  justify-self: start;
+  align-self: start;
+}
+
+.chat-page .dcEmbed.justifyAuto {
+  justify-self: auto;
+}
+
+.chat-page .dcEmbedFull {
+  background: var(--background-surface-high);
+  border: 1px solid var(--border-subtle);
+  border-inline-start: 4px solid var(--border-normal);
+}
+
+.chat-page .dcEmbedFull.isHidden {
+  border-inline-start: 0;
+}
+
+.chat-page .dcEmbedGridContainer {
+  max-width: 516px;
+}
+
+.chat-page .dcEmbedGrid {
+  display: grid;
+  grid-template-columns: auto;
+  grid-template-rows: auto;
+  overflow: hidden;
+  padding: .125rem 1rem 1rem .75rem;
+}
+
+.chat-page .dcEmbedGrid.hasThumbnail {
+  grid-template-columns: minmax(0, 1fr) min-content;
+}
+
+.chat-page .dcEmbedMargin {
+  margin-top: 8px;
+}
+
+.chat-page .dcEmbedProvider,
+.chat-page .dcEmbedAuthorName,
+.chat-page .dcEmbedTitle,
+.chat-page .dcEmbedDescription,
+.chat-page .dcEmbedFieldName,
+.chat-page .dcEmbedFieldValue,
+.chat-page .dcEmbedFooterText {
+  text-align: start;
+  unicode-bidi: plaintext;
+}
+
+.chat-page .dcEmbedLink {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.chat-page .dcEmbedLink:hover {
+  text-decoration: underline;
+}
+
+/* embedProvider: text-xs/normal */
+.chat-page .dcEmbedProvider {
+  grid-column: 1 / 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.3333;
+  color: var(--text-default);
+}
+
+.chat-page .dcEmbedProvider .dcEmbedLink {
+  color: var(--interactive-text-default);
+}
+
+.chat-page .dcEmbedProvider .dcEmbedLink:hover {
+  color: var(--interactive-text-hover);
+}
+
+.chat-page .dcEmbedAuthor {
+  align-items: center;
+  display: flex;
+  grid-column: 1 / 1;
+  min-width: 0;
+}
+
+.chat-page .dcEmbedAuthorName {
+  flex: 1;
+  font-size: .875rem;
+  font-weight: 600;
+  line-height: 1.375rem;
+  min-width: 0;
+  color: var(--text-strong);
+}
+
+.chat-page a.dcEmbedAuthorName {
+  color: var(--text-strong);
+}
+
+.chat-page .dcEmbedAuthorIcon {
+  border-radius: 50%;
+  flex: none;
+  height: 24px;
+  width: 24px;
+  margin-inline-end: 8px;
+  object-fit: contain;
+}
+
+.chat-page .dcEmbedTitle {
+  display: inline-block;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.375rem;
+  grid-column: 1 / 1;
+  min-width: 0;
+  color: var(--text-strong);
+}
+
+.chat-page .dcEmbedTitleLink {
+  color: var(--text-link);
+}
+
+/* embedDescription: text-sm/normal */
+.chat-page .dcEmbedDescription {
+  grid-column: 1 / 1;
+  white-space: pre-line;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.2857;
+  color: var(--text-default);
+}
+
+.chat-page .dcEmbedFields {
+  display: grid;
+  grid-column: 1 / 1;
+  margin-top: 8px;
+  grid-gap: 8px;
+  min-width: 0;
+}
+
+.chat-page .dcEmbedField {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.2857;
+}
+
+/* embedFieldName: text-sm/semibold */
+.chat-page .dcEmbedFieldName {
+  margin-bottom: 2px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2857;
+  color: var(--text-strong);
+}
+
+.chat-page .dcEmbedFieldValue {
+  min-width: 0;
+  white-space: pre-line;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.2857;
+  color: var(--text-default);
+}
+
+/* Markdown inside embeds reuses the chat's .content markup rules; neutralize
+   the message-level sizing so the embed text styles above win. */
+.chat-page .dcEmbedMarkup .emoji {
+  height: 18px;
+  width: 18px;
+  vertical-align: bottom;
+}
+
+.chat-page .dcEmbedMarkup a {
+  color: var(--text-link);
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.chat-page .dcEmbedMarkup a:hover {
+  text-decoration: underline;
+}
+
+.chat-page .dcEmbedMarkup h1,
+.chat-page .dcEmbedMarkup h2,
+.chat-page .dcEmbedMarkup h3 {
+  margin: 8px 0 4px;
+  font-weight: 700;
+  line-height: 1.375em;
+  color: var(--text-strong);
+}
+
+.chat-page .dcEmbedMarkup h1 { font-size: 1.5rem; }
+.chat-page .dcEmbedMarkup h2 { font-size: 1.25rem; }
+.chat-page .dcEmbedMarkup h3 { font-size: 1rem; }
+
+/* Code, code blocks and block quotes in embed markup use Discord's markup
+   rules + the embed overrides (pre/blockquote max-width 100%, cloned code
+   decoration) in codeblock.css. */
+
+.chat-page .dcEmbedMarkup ul,
+.chat-page .dcEmbedMarkup ol {
+  margin: 4px 0 0 16px;
+  padding: 0;
+  list-style-position: outside;
+}
+
+.chat-page .dcEmbedMarkup .spoiler {
+  background: var(--dc-spoiler-bg-hidden);
+  color: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.chat-page .dcEmbedMarkup .spoiler.revealed {
+  background: var(--dc-spoiler-bg-revealed);
+  color: inherit;
+  cursor: auto;
+}
+
+/* Media boxes */
+.chat-page .dcEmbedMedia {
+  border-radius: 4px;
+  contain: paint;
+  grid-column: 1 / 1;
+  min-width: 0;
+}
+
+.chat-page .dcEmbedGrid.hasThumbnail .dcEmbedMedia,
+.chat-page .dcEmbedGrid.hasThumbnail .dcEmbedFooter {
+  grid-column: 1 / 3;
+}
+
+.chat-page .dcEmbedFull .dcEmbedMedia,
+.chat-page .dcEmbedFull .dcGallery {
+  margin-top: 16px;
+}
+
+.chat-page .dcEmbedImage,
+.chat-page .dcEmbedThumbnail,
+.chat-page .dcEmbedVideo {
+  display: block;
+  object-fit: fill;
+}
+
+.chat-page .dcEmbedThumbnail {
+  flex-shrink: 0;
+  grid-column: 2 / 2;
+  grid-row: 1 / 8;
+  justify-self: end;
+  margin-inline-start: 16px;
+  margin-top: 8px;
+}
+
+.chat-page .dcEmbedImage img,
+.chat-page .dcEmbedThumbnail img,
+.chat-page .dcEmbedVideo img,
+.chat-page .dcEmbedVideo video {
+  border-radius: 4px;
+  display: block;
+}
+
+/* imageWrapper_af017a — aspect-ratio box, lazy img fills it. */
+.chat-page .dcImageWrapper {
+  display: block;
+  overflow: hidden;
+  position: relative;
+  border-radius: 3px;
+  user-select: text;
+  box-sizing: border-box;
+}
+
+.chat-page .dcImageWrapper.loading {
+  background: var(--background-gradient-chat, var(--background-base-low));
+}
+
+.chat-page .dcImageWrapper img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.chat-page .dcImageWrapper.clickable img {
+  cursor: pointer;
+}
+
+.chat-page .dcImageError {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 80px;
+  color: var(--text-muted);
+  background: var(--background-mod-subtle);
+}
+
+/* Inline media embeds (bare image/GIFV links) */
+.chat-page .dcInlineMediaEmbed {
+  border-radius: 4px;
+  box-sizing: border-box;
+  display: grid;
+  max-width: max-content;
+  position: relative;
+  justify-self: start;
+}
+
+.chat-page .dcInlineMediaEmbed .dcEmbedMedia {
+  margin-top: 0;
+}
+
+/* Gallery (multi-image embeds, embedGalleryImagesWrapper) */
+.chat-page .dcGallery {
+  border-radius: 4px;
+  column-gap: 4px;
+  display: grid;
+  grid-column: 1 / 2;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+  width: 400px;
+  max-width: 100%;
+}
+
+.chat-page .dcGallerySide {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-page .dcGalleryImage {
+  border-radius: 0;
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  max-width: 100%;
+  min-height: calc(50% - 2px);
+  min-width: 100%;
+  flex: 1;
+}
+
+.chat-page .dcGalleryImage:only-child {
+  min-height: 100%;
+}
+
+.chat-page .dcGalleryImage:nth-child(2) {
+  margin-top: 4px;
+}
+
+.chat-page .dcGalleryImage .dcImageWrapper {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+/* Video embeds: thumbnail + play pill (wrapper__926d7) */
+.chat-page .dcEmbedVideo {
+  display: flex;
+  position: relative;
+}
+
+.chat-page .dcEmbedVideoThumb {
+  width: 100%;
+  height: 100% !important;
+  aspect-ratio: auto;
+}
+
+.chat-page .dcEmbedVideo > .dcEmbedVideoThumb {
+  aspect-ratio: var(--dc-video-ar, 16 / 9);
+}
+
+.chat-page .dcEmbedVideoActions {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+.chat-page .dcPlayPill {
+  background-color: var(--opacity-black-60, rgba(0, 0, 0, .6));
+  border-radius: 24px;
+  box-sizing: border-box;
+  color: var(--white);
+  display: flex;
+  flex: 0 0 auto;
+  height: 48px;
+  padding: 12px;
+  pointer-events: none;
+}
+
+.chat-page .dcPlayPillIcon {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  flex: 0 0 auto;
+  opacity: .6;
+  pointer-events: auto;
+  transition: opacity .25s, color .25s;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--white) !important;
+}
+
+.chat-page .dcPlayPillIcon.active:hover {
+  opacity: 1;
+}
+
+.chat-page .dcPlayPillIcon.active:active {
+  transform: translateY(1px);
+}
+
+.chat-page .dcPlayIcon {
+  width: 24px;
+  height: 24px;
+  margin-inline: 1px -1px;
+}
+
+.chat-page .dcPlayExternal {
+  width: 24px;
+  height: 24px;
+}
+
+.chat-page .dcPlayExternal.margins {
+  margin-inline: 2px 4px;
+}
+
+.chat-page .dcEmbedIframeBox {
+  position: relative;
+  width: 100%;
+  height: 0;
+}
+
+.chat-page .dcEmbedIframe {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 4px;
+}
+
+.chat-page .dcEmbedSpotify {
+  width: 100%;
+  max-width: 400px;
+  border: 0;
+  border-radius: 12px;
+  display: block;
+}
+
+/* GIFV */
+.chat-page .dcGifv {
+  position: relative;
+}
+
+.chat-page .dcGifvVideo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+/* GIF tag (gifTag_f60819 + its 29×22 svg) */
+.chat-page .dcGifTag {
+  background-image: url(/vendor/discord/gif-tag.svg);
+  background-repeat: no-repeat;
+  height: 22px;
+  width: 29px;
+  inset-inline-start: 8px;
+  top: 8px;
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.chat-page .dcVisualMediaItem:hover .dcGifTag,
+.chat-page .dcGifv:hover .dcGifTag {
+  opacity: 0;
+}
+
+/* embedSuppressButton: the hover X at the card's top-right outer edge. */
+.chat-page .dcEmbedSuppressButton {
+  color: var(--interactive-text-default);
+  cursor: pointer;
+  inset-inline-end: -20px;
+  opacity: 0;
+  padding: 2px;
+  position: absolute;
+  top: -2px;
+  background: none;
+  border: 0;
+  display: flex;
+  z-index: 1;
+}
+
+.chat-page .dcEmbed:hover .dcEmbedSuppressButton,
+.chat-page .dcEmbed:focus-within .dcEmbedSuppressButton {
+  opacity: 1;
+}
+
+.chat-page .dcEmbedSuppressButton:hover {
+  color: var(--interactive-text-hover);
+}
+
+/* Footer */
+.chat-page .dcEmbedFooter {
+  align-items: center;
+  display: flex;
+  grid-column: 1 / 1;
+  grid-row: auto / auto;
+  min-width: 0;
+}
+
+.chat-page .dcEmbedFooterText {
+  color: var(--text-default);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3333;
+}
+
+.chat-page .dcEmbedFooterSeparator {
+  color: var(--text-default);
+  display: inline-block;
+  font-weight: 500;
+  margin: 0 4px;
+}
+
+.chat-page .dcEmbedFooterIcon {
+  border-radius: 50%;
+  height: 20px;
+  width: 20px;
+  margin-inline-end: 8px;
+  object-fit: contain;
+}
+
+/* --- Spoilers (spoilerContent__299eb) --- */
+.chat-page .dcSpoilerContainer {
+  position: relative;
+  filter: blur(0);
+  background-color: var(--dc-spoiler-bg-revealed);
+  justify-self: start;
+  max-width: max-content;
+}
+
+.chat-page .dcSpoilerContainer.embed {
+  border-radius: var(--radius-xs, 4px);
+}
+
+.chat-page .dcSpoilerContainer.attachment {
+  border-radius: var(--radius-sm, 8px);
+}
+
+.chat-page .dcSpoilerContainer.hidden {
+  overflow: hidden;
+  cursor: pointer;
+  background-color: var(--dc-spoiler-bg-hidden);
+  box-shadow: .5px .5px 1px 1px rgba(0, 0, 0, .08);
+}
+
+.chat-page .dcSpoilerContainer.hidden:hover {
+  background-color: var(--dc-spoiler-bg-hidden-hover);
+}
+
+.chat-page .dcSpoilerContainer.hidden article {
+  background-color: var(--dc-spoiler-bg-hidden);
+  border-color: var(--dc-spoiler-bg-hidden);
+}
+
+.chat-page .dcSpoilerContainer.hidden .dcSpoilerInner {
+  pointer-events: none;
+}
+
+.chat-page .dcSpoilerContainer.hidden .dcEmbedGrid,
+.chat-page .dcSpoilerContainer.hidden .dcInlineMediaEmbed,
+.chat-page .dcObscured {
+  filter: blur(var(--dc-spoiler-blur));
+  pointer-events: none;
+  transition: filter .1s ease-out;
+}
+
+.chat-page .dcSpoilerWarning {
+  align-items: center;
+  color: var(--dc-spoiler-warning-text);
+  display: flex;
+  flex-direction: column;
+  inset-inline-start: 50%;
+  padding: 8px 12px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  user-select: none;
+  z-index: 1;
+  background-color: var(--dc-spoiler-warning-bg);
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .5px;
+  line-height: 20px;
+  text-transform: uppercase;
+}
+
+.chat-page .dcSpoilerContainer.hidden:hover .dcSpoilerWarning {
+  color: var(--white);
+  background-color: var(--dc-spoiler-warning-bg-hover);
+}
+
+/* --- Attachment mosaics (588035 / 830560) --- */
+.chat-page .dcMosaic {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+}
+
+.chat-page .dcMosaicMulti {
+  width: 550px;
+  max-width: 100%;
+}
+
+.chat-page .dcOneByOneGrid {
+  display: inline-block;
+  max-height: 350px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.chat-page .dcOneByOneGridSingle {
+  border-radius: 8px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.chat-page .dcOneByOneGridMosaic {
+  display: flex;
+  max-height: 280px;
+  height: 280px;
+  width: 100%;
+}
+
+.chat-page .dcOneByTwoGrid {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  max-height: 280px;
+  height: 280px;
+}
+
+.chat-page .dcOneByTwoLayoutThreeGrid {
+  max-height: 350px;
+  height: 350px;
+}
+
+.chat-page .dcOneByTwoGridItem {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-page .dcOneByTwoSoloItem {
+  flex: 2;
+}
+
+.chat-page .dcOneByTwoDuoItem {
+  flex: 1;
+}
+
+.chat-page .dcTwoByOneGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+}
+
+.chat-page .dcTwoByOneGridItem {
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-page .dcThreeByThreeGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-gap: 4px;
+}
+
+.chat-page .dcThreeByThreeGrid .dcSquare {
+  aspect-ratio: 1 / 1;
+}
+
+.chat-page .dcTwoByTwoGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  grid-gap: 4px;
+  max-height: 350px;
+  height: 350px;
+}
+
+.chat-page .dcOneByOneGrid + .dcThreeByThreeGrid,
+.chat-page .dcOneByTwoGrid + .dcThreeByThreeGrid {
+  margin-top: 4px;
+}
+
+.chat-page .dcItemContentContainer,
+.chat-page .dcGridCell,
+.chat-page .dcOneByTwoGridItem > div,
+.chat-page .dcTwoByOneGridItem {
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+}
+
+.chat-page .dcVisualMediaItem {
+  border-radius: 8px;
+  height: 100%;
+  max-width: 550px;
+  overflow: hidden;
+  width: 100%;
+  position: relative;
+}
+
+.chat-page .dcVisualMediaItem.single {
+  height: auto;
+  max-width: 100%;
+  max-height: 350px;
+}
+
+.chat-page .dcMosaicItemContent {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.chat-page .dcMosaicItemContent.dcSpoilerContainer {
+  max-width: none;
+}
+
+.chat-page .dcMosaicItemMedia {
+  height: 100%;
+  width: 100%;
+}
+
+.chat-page .dcMosaicSingleImage,
+.chat-page .dcMosaicFillImage {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0;
+}
+
+.chat-page .dcMosaicSingleImage img,
+.chat-page .dcMosaicFillImage img {
+  object-fit: cover;
+}
+
+/* hoverButtonGroup__06ab4 */
+.chat-page .dcHoverButtonGroup {
+  background-color: var(--background-base-low);
+  border-radius: 5px;
+  display: flex;
+  inset-inline-end: 4px;
+  opacity: 0;
+  overflow: hidden;
+  position: absolute;
+  top: 4px;
+  z-index: 2;
+}
+
+.chat-page .dcVisualMediaItem:hover .dcHoverButtonGroup,
+.chat-page .dcHoverButtonGroup:focus-within {
+  opacity: 1;
+}
+
+.chat-page .dcHoverButton {
+  color: var(--interactive-text-default);
+  cursor: pointer;
+  display: flex;
+  padding: 6px;
+}
+
+.chat-page .dcHoverButton:hover {
+  background-color: var(--interactive-background-hover, var(--background-mod-subtle));
+  color: var(--interactive-text-hover);
+}
+
+/* Alt text badge (mediaMosaicAltText__0f481) */
+.chat-page .dcAltTextContainer {
+  position: absolute;
+  bottom: 4px;
+  inset-inline-start: 4.5px;
+  z-index: 2;
+}
+
+.chat-page .dcAltText {
+  background-color: rgba(0, 0, 0, .6);
+  border: 0;
+  border-radius: 4px;
+  color: var(--white);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 18px;
+  padding: 7px 8px;
+  transition: background-color .2s ease-in-out;
+}
+
+.chat-page .dcAltText:hover {
+  background-color: rgba(0, 0, 0, .8);
+}
+
+.chat-page .dcAltText:focus-visible {
+  background-color: #000;
+}
+
+.chat-page .dcAltTextPopout {
+  position: fixed;
+  z-index: 1001;
+  background-color: var(--background-surface-high);
+  border-radius: 8px;
+  box-shadow: var(--shadow-border), var(--shadow-high);
+  color: var(--text-default);
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  max-width: 360px;
+  padding: 13.5px 12px;
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.chat-page .dcAltTextPopoutTitle {
+  margin-bottom: 9.5px;
+  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.chat-page .dcAltTextPopoutDescription {
+  word-break: break-word;
+}
+
+/* Stickers render as the 160px asset. */
+.chat-page .dcStickerAsset img {
+  display: block;
+  width: 160px;
+  height: 160px;
+  object-fit: contain;
+}
+
+/* --- Non-visual attachments --- */
+.chat-page .dcNonVisualMediaContainer {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+}
+
+.chat-page .dcNonVisualMediaItem {
+  max-width: 100%;
+  width: fit-content;
+}
+
+.chat-page .dcNonVisualMediaItem + .dcNonVisualMediaItem {
+  margin-top: 8px;
+}
+
+/* File card (fileWrapper__0ccae) */
+.chat-page .dcFileWrapper {
+  max-width: 100%;
+  position: relative;
+  width: 432px;
+}
+
+.chat-page .dcFile {
+  align-items: center;
+  background-color: var(--background-surface-high);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-shadow: var(--shadow-low);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  letter-spacing: 0;
+  padding: 16px;
+  width: 100%;
+}
+
+.chat-page .dcFileIcon {
+  flex-shrink: 0;
+  height: 40px;
+  width: 30px;
+  margin-inline-end: 8px;
+}
+
+.chat-page .dcFileInner {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chat-page .dcFilenameLinkWrapper {
+  color: var(--text-link);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+}
+
+/* File name renders as a mention chip (same tokens as .chat-page .mention). */
+.chat-page .dcFileNameLink {
+  color: inherit;
+  text-decoration: none;
+  unicode-bidi: plaintext;
+}
+
+/* Discord's fileNameLink: no chip; the name keeps the file-name colour and
+   only underlines on hover. */
+.chat-page .dcFileNameLink:hover {
+  text-decoration: underline;
+}
+
+.chat-page .dcFileSize {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.3333;
+  font-weight: 400;
+}
+
+/* Hover download group (Discord's hoverButtonGroup on non-media items): hidden
+   until the file card is hovered, overlapping its top-right corner. */
+.chat-page .dcFileHoverGroup {
+  background-color: var(--background-base-low);
+  border-radius: 5px;
+  display: flex;
+  inset-inline-end: -8px;
+  opacity: 0;
+  outline: 1px solid var(--background-base-lower);
+  overflow: hidden;
+  position: absolute;
+  top: -8px;
+  z-index: 2;
+}
+
+.chat-page .dcFile:hover + .dcFileHoverGroup,
+.chat-page .dcFileHoverGroup:hover {
+  opacity: 1;
+}
+
+.chat-page .dcFileHoverButton {
+  color: var(--interactive-text-default);
+  cursor: pointer;
+  display: flex;
+  padding: 6px;
+}
+
+.chat-page .dcFileHoverButton:hover {
+  background-color: var(--interactive-background-hover);
+  color: var(--interactive-text-hover);
+}
+
+.chat-page .dcFileHoverButton:active {
+  background-color: var(--interactive-background-active);
+  color: var(--interactive-text-active);
+}
+
+.chat-page .dcMetadataDownload,
+.chat-page .dcTextDownload {
+  display: flex;
+  flex: 0 0 auto;
+  margin-inline-start: 8px;
+  color: var(--interactive-text-default);
+}
+
+.chat-page .dcMetadataDownload:hover,
+.chat-page .dcTextDownload:hover {
+  color: var(--interactive-text-hover);
+}
+
+/* --- Plaintext previews (textContainer__4d95d) --- */
+.chat-page .dcTextPreview {
+  display: grid;
+  max-width: 50vw;
+  min-width: 302px;
+  width: 432px;
+}
+
+.chat-page .dcTextContainer {
+  background-color: var(--background-base-lower);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px 8px 0 0;
+  box-sizing: border-box;
+  height: 100%;
+  max-height: 500px;
+  min-height: 118px;
+  overflow: hidden;
+}
+
+.chat-page .dcTextContainer.collapsed {
+  max-height: calc(max(var(--dc-preview-lines) * 16px, 100px) + 26px);
+}
+
+.chat-page .dcCodeView {
+  background-color: transparent;
+  font-family: var(--font-code, 'gg mono', Consolas, 'Andale Mono WT', 'Andale Mono', 'Lucida Console', Monaco, monospace);
+  font-size: .875rem;
+  line-height: 1rem;
+  min-height: 100px;
+  tab-size: 4;
+  margin: 8px 8px 0;
+  padding: 8px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  color: var(--text-default);
+  border: 0;
+}
+
+.chat-page .dcTextContainer:not(.collapsed) .dcCodeView {
+  max-height: 466px;
+  overflow: auto;
+}
+
+.chat-page .dcTextFooter {
+  align-items: center;
+  background-color: var(--background-surface-high);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0 0 8px 8px;
+  border-top: 0;
+  box-sizing: border-box;
+  color: var(--text-default);
+  display: flex;
+  flex-shrink: 0;
+  font-size: .875rem;
+  justify-content: flex-end;
+  min-width: 0;
+  padding: var(--space-12, 12px);
+}
+
+.chat-page .dcTextExpand {
+  display: flex;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--interactive-text-default);
+  cursor: pointer;
+  margin-inline-end: var(--space-8, 8px);
+}
+
+.chat-page .dcTextExpand:hover {
+  color: var(--interactive-text-hover);
+}
+
+.chat-page .dcTextNameSection {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chat-page .dcTextNameContainer {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chat-page .dcTextFileName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-default);
+}
+
+.chat-page .dcTextFileSize {
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.chat-page .dcTextFooterGap {
+  flex: 200 0 auto;
+  min-width: var(--space-16, 16px);
+}
+
+/* --- Reply preview attachment hint (repliedTextPlaceholder_c19a55) --- */
+.chat-page .dcRepliedTextPlaceholder {
+  font-style: italic;
+  padding-inline-end: 2px;
+}
+
+.chat-page .dcRepliedTextIcon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  vertical-align: top;
+}
+
+.chat-page .dcRepliedTextIcon.trailing {
+  margin-inline-start: 4px;
+}
+
+/* --- Window-level overlay layer (overlay.tsx) + Discord's scrim ---
+   The host sits under <body> with the chat-page class for the tokens; this
+   neutralizes the chat root's own layout box (absolute/flex/background). */
+.chat-page.dcOverlayBody {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: block;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  background: transparent;
+  pointer-events: none;
+}
+
+.chat-page.dcOverlayBody:empty {
+  display: none;
+}
+
+.chat-page.dcOverlayBody > * {
+  pointer-events: auto;
+}
+
+/* scrim__40128: fixed, --background-scrim (black 72%). */
+.chat-page .dcModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--background-scrim, hsl(0 0% 0% / .72));
+  transform: translateZ(0);
+  animation: dcFadeIn .12s ease-out;
+}
+
+@keyframes dcFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Image modal: Discord's LIGHTBOX backdrop (scrim__40128.lightbox__40128 →
+   --background-scrim-lightbox, black 92%) over the whole window. */
+.chat-page .dcMediaBackdrop {
+  background: var(--background-scrim-lightbox, hsl(0 0% 0% / .9216));
+}
+
+.chat-page .dcMediaModal {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+  animation: dcPop .18s ease-out;
+}
+
+@keyframes dcPop {
+  from { transform: scale(.92); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.chat-page .dcMediaModalStage {
+  display: flex;
+  border-radius: 4px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.chat-page .dcMediaModalStage.zoomed {
+  overflow: auto;
+}
+
+.chat-page .dcMediaModalMedia {
+  display: block;
+  object-fit: contain;
+  border-radius: 4px;
+  user-select: none;
+}
+
+.chat-page .dcMediaModalMedia.zoomIn {
+  cursor: zoom-in;
+}
+
+.chat-page .dcMediaModalMedia.zoomOut {
+  cursor: zoom-out;
+}
+
+.chat-page .dcMediaModalOpen {
+  color: var(--white);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 30px;
+  opacity: .5;
+  text-decoration: none;
+  transition: opacity .15s ease;
+}
+
+.chat-page .dcMediaModalOpen:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.chat-page .dcMediaModalNav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(0, 0, 0, .6);
+  color: var(--white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: .8;
+}
+
+.chat-page .dcMediaModalNav:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, .8);
+}
+
+.chat-page .dcMediaModalNav.prev { left: 24px; }
+.chat-page .dcMediaModalNav.next { right: 24px; }
+
+.chat-page .dcMediaModalCount {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--white);
+  font-size: 14px;
+  font-weight: 500;
+  opacity: .8;
+}
+
+/* "Leaving Discord" masked-link modal */
+.chat-page .dcLinkModal {
+  width: 440px;
+  max-width: calc(100% - 32px);
+  background: var(--background-surface-high, #242429);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--shadow-high);
+  overflow: hidden;
+  animation: dcPop .18s ease-out;
+  color: var(--text-default);
+}
+
+.chat-page .dcLinkModalHeader {
+  padding: 24px 24px 0;
+}
+
+.chat-page .dcLinkModalTitle {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-strong);
+}
+
+.chat-page .dcLinkModalBody {
+  padding: 16px 24px 24px;
+}
+
+.chat-page .dcLinkModalText {
+  font-size: 16px;
+  line-height: 1.25;
+  color: var(--text-default);
+}
+
+.chat-page .dcLinkModalUrl {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--background-base-lowest, #000);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-strong);
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: 500;
+  word-break: break-all;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.chat-page .dcLinkModalCheck {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 18px;
+  color: var(--text-default);
+  position: relative;
+}
+
+.chat-page .dcLinkModalCheck input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.chat-page .dcLinkModalCheckBox {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, .24));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--white);
+  transition: background-color .15s ease, border-color .15s ease;
+}
+
+.chat-page .dcLinkModalCheck input:checked + .dcLinkModalCheckBox {
+  background: var(--brand-500);
+  border-color: var(--brand-500);
+}
+
+.chat-page .dcLinkModalCheck input:focus-visible + .dcLinkModalCheckBox {
+  box-shadow: 0 0 0 2px var(--brand-500);
+}
+
+.chat-page .dcLinkModalCheckLabel strong {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.chat-page .dcLinkModalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 24px 24px;
+}
+
+.chat-page .dcButton {
+  min-width: 60px;
+  height: 38px;
+  padding: 2px 16px;
+  border: 0;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 16px;
+  cursor: pointer;
+  transition: background-color .17s ease, color .17s ease;
+}
+
+.chat-page .dcButtonSecondary {
+  background: var(--control-secondary-background-default, hsl(240 4% 24%));
+  color: var(--control-secondary-text-default, var(--white));
+}
+
+.chat-page .dcButtonSecondary:hover {
+  background: var(--control-secondary-background-hover, hsl(240 4% 28%));
+}
+
+.chat-page .dcButtonBrand {
+  background: var(--control-primary-background-default, var(--brand-500));
+  color: var(--control-primary-text-default, var(--white));
+}
+
+.chat-page .dcButtonBrand:hover {
+  background: var(--control-primary-background-hover);
+}
+
+.chat-page .dcButtonDanger {
+  background: var(--control-critical-primary-background-default, #d22d39);
+  color: var(--white);
+}
+
+.chat-page .dcButtonDanger:hover {
+  background: var(--control-critical-primary-background-hover, #b42831);
+}
+
+.chat-page .dcSuppressTip {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.chat-page .dcButtonBrand:active {
+  background: var(--control-primary-background-active);
+}
+
+/* Discord attachmentLink (markdown 258072): a CDN attachment URL in message
+   content shows as paperclip + file name. Icon = AttachmentIcon size xs with
+   icon_b75563 (1em box, .2rem lift, 4px gap) — currentColor = link color. */
+.chat-page .attachmentLink .attachmentLinkIcon {
+  width: 1em;
+  height: 1em;
+  margin-bottom: 0.2rem;
+  margin-inline-end: 4px;
+  vertical-align: middle;
+}
+
+/* attachmentLink chip = Discord wrapper_f61d60 (mention tokens, 3px radius,
+   0 2px padding, medium weight, unicode-bidi plaintext) + .interactive hover
+   (brand-500 fill, white text). Overrides `.chat-page .content a` (link color,
+   underline on hover) — no underline in any state. */
+.chat-page .content a.attachmentLink,
+.chat-page a.attachmentLink {
+  background-color: var(--mention-background);
+  color: var(--mention-foreground);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: var(--font-weight-medium);
+  unicode-bidi: plaintext;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 50ms ease-out, color 50ms ease-out;
+}
+
+.chat-page .content a.attachmentLink:hover,
+.chat-page a.attachmentLink:hover {
+  text-decoration: none;
+  color: var(--white);
+  background-color: var(--brand-500);
+}
+
+/* Discord .theme-dark.low-contrast .wrapper_f61d60 (brand variant). The repo's
+   token set has no --brand-05a / --brand-300, so Discord's values are inlined
+   (brand-05a = brand-500 at 5%; brand-300 = blurple-15). */
+.theme-dark.low-contrast .chat-page .content a.attachmentLink,
+.theme-dark.low-contrast .chat-page a.attachmentLink {
+  background-color: hsla(var(--blurple-50-hsl)/0.05);
+  color: hsl(235.161 calc(var(--saturation-factor, 1)*86.111%) 85.882%);
+}

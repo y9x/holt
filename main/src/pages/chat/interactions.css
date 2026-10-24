@@ -1,0 +1,599 @@
+/* Application commands + message components (Interactions.tsx).
+ *
+ * Header: Discord's executedCommand_c19a55 inside the repliedMessage line
+ * (the .messageReply rules in chat.css supply the 14px/18px line, the spine
+ * and the 16px avatar/badge). Buttons: the mana Button (button_a22cb0, size
+ * sm, hasText) with Discord's ButtonStyle -> variant mapping. Selects: the
+ * lookFilled select (select_a16aea). Components V2 follow Discord's message
+ * accessories layout: 8px gaps, containers styled like full embeds with the
+ * 4px accent bar, media galleries on the attachment mosaic (f4758a) with the
+ * isInAppComponentsV2 600px cap. Tokens are .theme-midnight values. */
+
+.chat-page {
+  --control-primary-background-default: hsl(var(--blurple-50-hsl)/1);
+  --control-primary-background-hover: hsl(var(--blurple-60-hsl)/1);
+  --control-primary-background-active: hsl(var(--blurple-65-hsl)/1);
+  --control-primary-border-default: hsl(0 0% 100%/0.0784313725490196);
+  --control-primary-text-default: hsl(var(--neutral-1-hsl)/1);
+  --control-secondary-background-default: hsl(var(--opacity-12-hsl)/0.12156862745098039);
+  --control-secondary-background-hover: hsl(var(--opacity-20-hsl)/0.2);
+  --control-secondary-background-active: hsl(var(--opacity-24-hsl)/0.23921568627450981);
+  --control-secondary-border-default: hsl(var(--opacity-16-hsl)/0.1607843137254902);
+  --control-secondary-text-default: hsl(var(--neutral-10-hsl)/1);
+  --control-connected-background-default: hsl(var(--green-new-50-hsl)/1);
+  --control-connected-background-hover: hsl(var(--green-new-60-hsl)/1);
+  --control-connected-background-active: hsl(var(--green-new-65-hsl)/1);
+  --control-connected-border-default: hsl(0 0% 100%/0.0784313725490196);
+  --control-connected-text-default: hsl(var(--neutral-1-hsl)/1);
+  --control-critical-primary-background-default: hsl(var(--red-new-50-hsl)/1);
+  --control-critical-primary-background-hover: hsl(var(--red-new-60-hsl)/1);
+  --control-critical-primary-background-active: hsl(var(--red-new-65-hsl)/1);
+  --control-critical-primary-border-default: hsl(0 0% 100%/0.0784313725490196);
+  --control-critical-primary-text-default: hsl(var(--neutral-1-hsl)/1);
+}
+
+/* ---- executed-command header ------------------------------------------------ */
+
+.chat-page .messageReply.executedCommand {
+  height: 18px;
+  min-width: 0;
+}
+
+/* Name: dimmed to .64 like every reply-line name (messageReplyName), no '@'. */
+.chat-page .executedCommand .executedCommandUser {
+  flex-shrink: 0;
+}
+
+.chat-page .executedCommand .executedCommandUsed {
+  flex-shrink: 0;
+}
+
+/* commandName_c19a55: link color, medium weight, no trailing gap. */
+.chat-page .executedCommand .executedCommandName {
+  flex-shrink: 0;
+  color: var(--text-link);
+  font-weight: var(--font-weight-medium);
+  opacity: .64;
+  cursor: pointer;
+}
+
+.chat-page .executedCommand .executedCommandName:hover {
+  text-decoration: underline;
+}
+
+.chat-page .executedCommand .executedCommandAvatar {
+  cursor: pointer;
+}
+
+/* Surfaces without the avatar gutter (pinned list): no elbow spine. */
+.chat-page .messageReply.executedCommand.ix-noSpine {
+  margin-bottom: 4px;
+  padding-inline-start: 0;
+}
+.chat-page .messageReply.executedCommand.ix-noSpine::before {
+  display: none;
+}
+
+/* commandIcon_c19a55 (5x9 slash) in the compact replyBadge. */
+.chat-page .messageReplyIcon.executedCommandBadge svg.ix-commandIcon {
+  width: 5px;
+  height: 9px;
+}
+
+/* ---- "is thinking..." ------------------------------------------------------------ */
+
+.chat-page .content.ix-thinking {
+  color: var(--text-muted);
+}
+
+.chat-page .ix-thinkingDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline-start: 4px;
+  vertical-align: middle;
+  color: var(--text-default);
+}
+
+.chat-page .ix-thinkingDots i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .32;
+  scale: .8;
+  animation: ix-dots-pulse 1.2s steps(12) infinite;
+}
+
+.chat-page .ix-thinkingDots i:nth-child(1) { animation-delay: -1.2s; }
+.chat-page .ix-thinkingDots i:nth-child(2) { animation-delay: -1.05s; }
+.chat-page .ix-thinkingDots i:nth-child(3) { animation-delay: -.9s; }
+
+@keyframes ix-dots-pulse {
+  0%, 50%, 100% { opacity: .32; scale: .8; }
+  25% { opacity: 1; scale: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-page .ix-thinkingDots i { animation-duration: 2.4s; animation-timing-function: steps(24); }
+}
+
+/* ---- components wrapper ------------------------------------------------------------ */
+
+.chat-page .ix-components {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding-block: 2px;
+  margin-top: 2px;
+  max-width: 100%;
+  white-space: normal;
+  text-indent: 0;
+  user-select: text;
+}
+
+/* Text displays reuse the message markdown (.content) but always as blocks,
+   compact included. */
+.chat-page .ix-components .content.ix-textDisplay {
+  display: block;
+  min-height: 0;
+  overflow: visible;
+}
+
+.chat-page .ix-actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
+/* ---- buttons (mana Button, sm) ---------------------------------------------------- */
+
+.chat-page .ix-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font-family: var(--font-primary, inherit);
+  font-size: 14px;
+  font-weight: var(--font-weight-medium);
+  line-height: 18px;
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 50ms ease-in, color 50ms ease-in, border-color 50ms ease-in, opacity 50ms ease-in;
+}
+
+.chat-page .ix-button:hover {
+  text-decoration: none;
+  transition: background-color .15s ease-out, color .15s ease-out, border-color .15s ease-out, opacity .15s ease-out;
+}
+
+.chat-page .ix-buttonInner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4, 4px);
+  box-sizing: border-box;
+  min-width: 30px;
+  min-height: 30px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chat-page .ix-button.ix-hasText {
+  min-width: 60px;
+}
+
+.chat-page .ix-button.ix-hasText .ix-buttonInner {
+  padding: 3px 11px;
+}
+
+.chat-page .ix-buttonLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-page .ix-button .ix-emoji {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
+.chat-page .ix-button .ix-emojiNative img.emoji,
+.chat-page .ix-select .ix-emojiNative img.emoji {
+  width: 20px;
+  height: 20px;
+  vertical-align: middle;
+}
+
+.chat-page .ix-emojiNative {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-page .ix-linkIcon {
+  flex-shrink: 0;
+}
+
+.chat-page .ix-primary {
+  background-color: var(--control-primary-background-default);
+  border-color: var(--control-primary-border-default);
+  color: var(--control-primary-text-default);
+}
+.chat-page .ix-primary:hover { background-color: var(--control-primary-background-hover); color: var(--control-primary-text-default); }
+.chat-page .ix-primary:active { background-color: var(--control-primary-background-active); }
+
+.chat-page .ix-secondary {
+  background-color: var(--control-secondary-background-default);
+  border-color: var(--control-secondary-border-default);
+  color: var(--control-secondary-text-default);
+}
+.chat-page .ix-secondary:hover { background-color: var(--control-secondary-background-hover); color: var(--control-secondary-text-default); }
+.chat-page .ix-secondary:active { background-color: var(--control-secondary-background-active); }
+
+.chat-page .ix-active {
+  background-color: var(--control-connected-background-default);
+  border-color: var(--control-connected-border-default);
+  color: var(--control-connected-text-default);
+}
+.chat-page .ix-active:hover { background-color: var(--control-connected-background-hover); color: var(--control-connected-text-default); }
+.chat-page .ix-active:active { background-color: var(--control-connected-background-active); }
+
+.chat-page .ix-critical-primary {
+  background-color: var(--control-critical-primary-background-default);
+  border-color: var(--control-critical-primary-border-default);
+  color: var(--control-critical-primary-text-default);
+}
+.chat-page .ix-critical-primary:hover { background-color: var(--control-critical-primary-background-hover); color: var(--control-critical-primary-text-default); }
+.chat-page .ix-critical-primary:active { background-color: var(--control-critical-primary-background-active); }
+
+/* button_a22cb0:disabled */
+.chat-page .ix-button.ix-disabled,
+.chat-page .ix-button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ---- selects (lookFilled) ------------------------------------------------------------ */
+
+.chat-page .ix-select {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 400px;
+  max-width: 100%;
+  min-height: 40px;
+  padding-block: 7px;
+  padding-inline: 11px 7px;
+  border: 1px solid hsl(var(--opacity-20-hsl)/0.2);
+  border-radius: var(--radius-sm);
+  background: var(--input-background-default);
+  color: var(--text-default);
+  font-size: 16px;
+  font-weight: var(--font-weight-medium);
+  line-height: 20px;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color .2s ease-in-out;
+}
+
+.chat-page .ix-select:hover {
+  border-color: hsl(var(--opacity-24-hsl)/0.23921568627450981);
+}
+
+.chat-page .ix-select.ix-selectFull {
+  width: 100%;
+}
+
+.chat-page .ix-select.ix-disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.chat-page .ix-selectValue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chat-page .ix-selectOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-page .ix-selectPlaceholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-subtle);
+}
+
+.chat-page .ix-select .ix-emoji {
+  width: 20px;
+  height: 20px;
+}
+
+.chat-page .ix-selectChevron {
+  color: var(--interactive-text-default);
+  flex-shrink: 0;
+}
+
+/* ---- Components V2 ------------------------------------------------------------------- */
+
+/* Container: full-embed surface (embedFull: surface-high, subtle border,
+   4px inline-start bar) at the V2 600px cap. */
+.chat-page .ix-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 600px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--background-surface-high);
+}
+
+.chat-page .ix-container.ix-hasAccent {
+  border-inline-start-width: 4px;
+  border-inline-start-style: solid;
+}
+
+.chat-page .ix-v2 > .ix-textDisplay,
+.chat-page .ix-v2 > .ix-section,
+.chat-page .ix-v2 > .ix-gallery,
+.chat-page .ix-v2 > .ix-separator {
+  max-width: 600px;
+  width: 100%;
+}
+
+.chat-page .ix-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.chat-page .ix-section.ix-sectionThumb {
+  align-items: flex-start;
+}
+
+.chat-page .ix-sectionContent {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-page .ix-sectionAccessory {
+  flex: 0 0 auto;
+  display: flex;
+}
+
+.chat-page .ix-mediaItem.ix-thumbnail {
+  width: 85px;
+  height: 85px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chat-page .ix-separator {
+  width: 100%;
+  box-sizing: border-box;
+}
+.chat-page .ix-separator.ix-spacingSmall { padding-block: 0; }
+.chat-page .ix-separator.ix-spacingLarge { padding-block: 8px; }
+.chat-page .ix-separator.ix-divider::before {
+  content: "";
+  display: block;
+  height: 1px;
+  background: var(--border-subtle);
+}
+.chat-page .ix-separator:not(.ix-divider) { min-height: 1px; }
+
+/* Media gallery (attachment mosaic, V2 600px cap). */
+.chat-page .ix-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-width: 600px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chat-page .ix-mediaItem {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--background-mod-subtle);
+}
+
+.chat-page .ix-mediaLink {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.chat-page .ix-mediaEl {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-page .ix-oneByOne.ix-single {
+  display: block;
+  max-height: 350px;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chat-page .ix-oneByOne.ix-single .ix-mediaItem,
+.chat-page .ix-oneByOne.ix-single .ix-mediaEl {
+  max-height: 350px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.chat-page .ix-oneByOne.ix-mosaic {
+  display: flex;
+  max-height: 280px;
+  width: 100%;
+}
+.chat-page .ix-oneByOne.ix-mosaic .ix-mediaItem { flex: 1; aspect-ratio: 16 / 9; }
+
+.chat-page .ix-oneByTwo {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  height: 280px;
+}
+.chat-page .ix-oneByTwo > .ix-mediaItem { flex: 1; }
+.chat-page .ix-oneByTwo.ix-three { height: 350px; }
+.chat-page .ix-oneByTwo .ix-soloItem { flex: 2; }
+
+.chat-page .ix-twoByOne {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.chat-page .ix-twoByOne > .ix-mediaItem { flex: 1; }
+
+.chat-page .ix-twoByTwo {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  height: 350px;
+}
+
+.chat-page .ix-threeByThree {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.chat-page .ix-threeByThree > .ix-mediaItem { aspect-ratio: 1 / 1; }
+
+/* File component (Discord's file attachment card). */
+.chat-page .ix-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 432px;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--background-surface-high);
+}
+
+.chat-page .ix-fileIcon { flex: 0 0 auto; }
+
+.chat-page .ix-fileInner {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chat-page .ix-fileName {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-link);
+  font-size: 16px;
+  line-height: 20px;
+  text-decoration: none;
+}
+.chat-page .ix-fileName:hover { text-decoration: underline; }
+
+.chat-page .ix-fileSize {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* Spoilers: blurred until clicked, with Discord's SPOILER pill. */
+.chat-page .ix-spoiler {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.chat-page .ix-spoilerContent {
+  width: 100%;
+  height: 100%;
+  filter: blur(44px);
+  pointer-events: none;
+}
+.chat-page .ix-spoilerWarning {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 8px 12px;
+  border-radius: 20px;
+  background: hsl(0 0% 0%/.6);
+  color: var(--white, #fff);
+  font-size: 15px;
+  font-weight: var(--font-weight-semibold, 600);
+  letter-spacing: .05em;
+}
+.chat-page .ix-containerSpoiler { max-width: 600px; }
+
+/* ---- "Use Discord to interact with this" tooltip ---------------------------------------- */
+
+.chat-page .d-tooltip.ix-notice {
+  position: fixed;
+  z-index: 1002;
+  transform: translate(-50%, calc(-100% - 8px));
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: none;
+  animation: ix-notice-in .1s ease-out;
+}
+
+.chat-page .ix-noticePointer {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+}
+
+@keyframes ix-notice-in {
+  from { opacity: 0; transform: translate(-50%, calc(-100% - 4px)); }
+  to { opacity: 1; transform: translate(-50%, calc(-100% - 8px)); }
+}

@@ -13,8 +13,14 @@ location /chat/ {
     proxy_pass https://holt.abstracteducation.loan/<your-platform-id>/;
     proxy_ssl_server_name on;
     proxy_set_header X-Holt-License "<your license>";
+    # Live updates are a WebSocket under /chat/: let the upgrade through.
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
 }
 ```
+
+(Caddy's `reverse_proxy` passes WebSockets through on its own.)
 
 ## Your license
 

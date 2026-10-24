@@ -519,6 +519,8 @@ async function handleOwnAccounts(request: http.IncomingMessage, response: http.S
   if (rest === '/_holt/api/auth/resend-verification' && method === 'POST') {
     return sendJson(response, 400, { error: `Verify your email on ${platform.name}.`, verifyEmail: platform.links.verifyEmail ?? platform.links.account })
   }
+  // Avatars are uploaded and moderated for abulxt accounts only; others show Discord's default (no upload).
+  if (rest === '/_holt/api/avatars/me' && method === 'GET') return sendJson(response, 200, { active: null, latest: null })
   // The server rail layout (folders) is kept for abulxt accounts only; others get Discord's default order.
   if (rest === '/_holt/api/account/guild-folders') return sendJson(response, 200, { guildFolders: [] })
   return sendJson(response, 404, { error: 'not found' })

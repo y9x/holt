@@ -145,6 +145,22 @@ and keeps abulxt's chat working; steps marked ⚠ change production data or traf
 **Federation (requested 2026-10-24): every platform's users in the same channels, as equals.** holt owns
 the bridge API now, so this is holt work, verified at each stage with holt-test plus a test platform:
 
+Done 2026-10-24 toward federation: forward-auth speaks nocturne's scheme (configurable token header,
+field fallbacks, negated emailVerified); nocturne is configured from its live site; **holt lab**
+(`lab/server.mjs`, https://holtlab.abstracteducation.loan) is a licensed test partner with its own accounts
+in nocturne's scheme, used for every check below (lab users resolve as `lab:<id>`; the lab license reaches
+only the lab; live revocation works).
+
+Settled for the remaining stages:
+- Federated users get roles the same way abulxt web users do: by answering the guild's onboarding, keyed
+  by their ext key. `withEffectiveRoles` (abulxt `discord-channel-access.ts`, vendored) gains an identity
+  key so it is not tied to a numeric site id; changed in abulxt first.
+- Realtime for a partner origin is holt's: holt-chat mounts the realtime socket for ext principals
+  (`/<id>/_holt/api/rt`), because a partner's own origin has no socket and abulxt's carries abulxt-only
+  account and AI events.
+- holt-chat never trusts a platform's own `Authorization` for ext platforms: holt-service strips it and
+  sends a signed principal (`X-Holt-Principal`, HMAC from holt's sessionSecret), stripping any inbound copy.
+
 - **F1 Identity hand-off.** holt-service authenticates the visitor (forward-auth) and passes the principal
   to holt-chat in a header signed with a holt-only secret (`X-Holt-Principal`); holt-chat's identity layer
   accepts it only with a valid signature and only from loopback. abulxt-namespace platforms keep using

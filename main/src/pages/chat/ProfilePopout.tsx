@@ -6,7 +6,7 @@ import { usePopoutPosition } from './popout'
 import { popoutLayer } from './overlay'
 import { bridgeProfile, bridgeSelfProfile, bridgeWebhookProfile, type BridgeProfile, type BridgeSelfProfile, type BridgeWebhookProfile } from '../../lib/bridge'
 import { subscribeRt } from '../../lib/rt'
-import { AvatarDecoration, GuildTagChiplet, dnsFontClass, primeAuthorStyle, roleDotStyle } from './author-style'
+import { AvatarDecoration, GuildTagChiplet, dnsFontClass, primeAuthorStyle, roleDotStyle, WEB_IDENTITY_KEY } from './author-style'
 import { PRESENCE_TEXT, presenceGlyph, usePublicPresence } from './presence'
 
 /* Discord's bite-size user profile popout (.outer_c0bea0.user-profile-popout,
@@ -206,9 +206,9 @@ export function ProfilePopout({ profile, channelId, guildName, guildIcon, onClos
     return () => { alive = false }
   }, [cacheKey, channelId, profile.discordId])
 
-  // Web (webhook) identity record: a web author's 'user:<siteId>' key, or
+  // Web (webhook) identity record: a web author's identity key (WEB_IDENTITY_KEY), or
   // 'self' for the account popout (works for unlinked accounts too).
-  const webhookKey = !isSelf && profile.direction === 'web' && /^(?:abulxt|user):\d+$/.test(profile.authorKey || '') ? profile.authorKey! : null
+  const webhookKey = !isSelf && profile.direction === 'web' && WEB_IDENTITY_KEY.test(profile.authorKey || '') ? profile.authorKey! : null
   const webhookCacheKey = webhookKey && channelId ? `${channelId}:${webhookKey}` : null
   const freshWebhook = (k: string | null) => {
     const hit = k ? webhookProfileCache.get(k) : undefined

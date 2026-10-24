@@ -35,3 +35,19 @@ export function siteIdOfChatKey(key: unknown): number | null {
   const id = Number(match[1])
   return Number.isSafeInteger(id) && id > 0 ? id : null
 }
+
+/**
+ * A chat caller: a site account (`id`), or (holt) another platform's identity (`ext_key`, `<namespace>:<subject>`,
+ * verified by holt before it reaches the chat API; never set from client input). Either may carry a linked Discord.
+ */
+export interface ChatSubjectUser {
+  id?: number | null
+  discord_id?: string | null
+  ext_key?: string | null
+}
+
+/** The chat identity key of a caller (`abulxt:<id>`, or its ext key), or null for a guest. */
+export function chatKeyOfUser(user: ChatSubjectUser | null | undefined): string | null {
+  if (user?.id != null) return siteChatKey(user.id)
+  return user?.ext_key || null
+}

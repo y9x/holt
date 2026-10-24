@@ -4,6 +4,7 @@ import { loadDecryptionKey } from '../lib/holy-decrypt'
 import { HolyText } from '../components/common/HolyText'
 import { App } from './App'
 import { readPlatform } from './platform'
+import { startProxySession } from './proxy-session'
 import './embed.css'
 
 // A chat platform gets the full chatbox; every other platform gets the identity shell (App).
@@ -26,7 +27,9 @@ loadDecryptionKey()
 const root = createRoot(document.getElementById('root')!)
 const platform = readPlatform()
 if (platform?.chat) seedHomeGuild(platform.homeGuild)
-root.render(
+// A platform with its own accounts: sign the chatbox in with the platform's login before it mounts.
+const ready = platform?.chat && platform.api === 'holt' ? startProxySession(platform.tokenStorageKey) : Promise.resolve()
+void ready.then(() => root.render(
   <StrictMode>
     {platform?.chat ? (
       <Suspense fallback={null}>
@@ -38,4 +41,4 @@ root.render(
       <HolyText as="p" className="holt-error" text="This site is not set up for chat." />
     )}
   </StrictMode>,
-)
+))

@@ -97,11 +97,15 @@ export function discordAuthorId(message: Pick<BridgeMessage, 'authorKey' | 'dire
   return message.authorKey.startsWith('discord:') ? message.authorKey.slice('discord:'.length) : null
 }
 
+/** A web (webhook) author's identity key: a site account (`abulxt:<n>`, legacy `user:<n>`) or, through
+ *  holt, another platform's user (`<namespace>:<subject>`). Never a Discord or guest key. */
+export const WEB_IDENTITY_KEY = /^(?!discord:|guest:)[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._-]{1,128}$/
+
 /** Style lookup key for a message author: the Discord snowflake for
- *  Discord-side authors, the 'user:<siteId>' webhook key for web authors
+ *  Discord-side authors, the web identity key for web authors
  *  (their effective roles' name color / gradient), else null. */
 export function authorStyleKey(message: Pick<BridgeMessage, 'authorKey' | 'direction'>): string | null {
-  if (message.direction === 'web') return /^(?:abulxt|user):\d+$/.test(message.authorKey || '') ? message.authorKey : null
+  if (message.direction === 'web') return WEB_IDENTITY_KEY.test(message.authorKey || '') ? message.authorKey : null
   return discordAuthorId(message)
 }
 

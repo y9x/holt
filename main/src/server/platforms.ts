@@ -49,11 +49,19 @@ export interface Platform {
   links: PlatformLinks
   userState: UserStateConfig | null
   /**
-   * The full chatbox instead of the identity shell. The chatbox calls the chat API on the page's own
-   * origin (/api/discord/bridge/*, /api/rt), so only a proxy platform whose origin serves that API can
-   * set it: abulxt, until the chat API moves into holt (docs/PLAN.md, phase 1).
+   * The full chatbox instead of the identity shell (proxy platforms only). A platform on abulxt accounts
+   * (SITE_NAMESPACE) calls the chat API and realtime on its own origin, which abulxt routes to holt; any
+   * other platform calls them under its `/chat/_holt/api/`, through the same proxy rule as the page.
    */
   chat: boolean
+}
+
+/** The identity namespace of abulxt's own accounts: the abulxt and Abstract sites sign in with them. */
+export const SITE_NAMESPACE = 'abulxt'
+
+/** Does this platform sign in with abulxt accounts (abulxt's own API resolves them), or its own? */
+export function usesSiteAccounts(platform: Pick<Platform, 'identityNamespace'>): boolean {
+  return platform.identityNamespace === SITE_NAMESPACE
 }
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/

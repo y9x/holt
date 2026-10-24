@@ -161,6 +161,22 @@ Settled for the remaining stages:
 - holt-chat never trusts a platform's own `Authorization` for ext platforms: holt-service strips it and
   sends a signed principal (`X-Holt-Principal`, HMAC from holt's sessionSecret), stripping any inbound copy.
 
+**Built 2026-10-24 (F1-F3, F5; F4 partly).** Code map: `server/chat-caller.ts` (ExtChatUser, the signed
+X-Holt-Principal, avatar-path rewrite for foreign pages), holt-service `handleOwnAccounts` (`_holt/session`
+sign-in exchange, `_holt/api/auth/me`, captcha passthrough) + `callerHeaders` + `handleUpgrade`,
+`server/chat-rt.ts` (holt-chat `/api/rt` for these users), `lib/api-base.ts` (holt stand-in: `./_holt` base),
+`embed/proxy-session.ts` (sign-in before the chatbox mounts, renewed every 10 min, on tab return, and on the
+platform's login changing). abulxt shared code takes `ext_key` (`chat-identity-key.ts ChatSubjectUser`,
+`chatKeyOfUser`; onboarding state and emulated roles key by it). Every "is this my message" check compares
+keys (`authoredBy`): an id comparison would make every ext user the author of every other's messages.
+e2e covers the hand-off (stripped Authorization/Cookie/forged principals, signed principal, realtime, license).
+Decided while building, revisit if wanted:
+- An ext user's avatar is Discord's default: platform-supplied avatar URLs have no moderation path, and
+  only moderated avatars are shown or sent to Discord. (A fetch-and-moderate path is the fix.)
+- Set Status, presence dots and server-rail folders are kept for abulxt accounts only (accepted, not stored).
+- Email verification and every account action belong to the platform (`links`); holt only relays the claim.
+- No platform badge yet (F4).
+
 - **F1 Identity hand-off.** holt-service authenticates the visitor (forward-auth) and passes the principal
   to holt-chat in a header signed with a holt-only secret (`X-Holt-Principal`); holt-chat's identity layer
   accepts it only with a valid signature and only from loopback. abulxt-namespace platforms keep using

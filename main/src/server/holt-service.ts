@@ -13,6 +13,17 @@
 //   GET  /<id>/                       The chat page, top-level on the platform's site.
 //   GET  /<id>/_holt/me               { principal | null, links }. Needs `X-Holt: 1`.
 //   *    /<id>/_holt/api/discord/bridge/*  The chat API (chat platforms), proxied to holt-chat.
+//
+// A chat platform with its own accounts (not abulxt's, see usesSiteAccounts) also gets:
+//
+//   POST /<id>/_holt/session          Platform cookies/token -> a short holt session ({ session: null } when
+//                                     signed out). The page holds it and renews it. Needs `X-Holt: 1`.
+//   GET  /<id>/_holt/api/auth/me      The chatbox's "who am I" for that session.
+//   WS   /<id>/_holt/api/rt           Realtime (bridge events), proxied to holt-chat.
+//
+// For those platforms holt-service is the only one that decides who the caller is: it drops the caller's
+// Authorization and Cookie headers (except the `wcs` seal seed) and any X-Holt-Principal, and tells
+// holt-chat in a signed X-Holt-Principal (chat-caller.ts).
 //   GET  /<id>/assets/*               The compiled build (relative URLs, so any proxy path works).
 //
 // Iframe embedding (identity tokens, for sites that cannot proxy):
@@ -31,7 +42,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { loadConfig, type HoltConfig } from './holt-config.ts'
-import { frameAncestors, platformById, platformForOrigin, type Platform } from './platforms.ts'
+import { frameAncestors, platformById, platformForOrigin, usesSiteAccounts, type Platform } from './platforms.ts'
+import { FOREIGN_PAGE_HEADER, PRINCIPAL_HEADER, signPrincipal } from './chat-caller.ts'
 import { IdentityTokenError, verifyIdentityToken, type Principal } from './identity-token.ts'
 import { issueSession, readSession, SESSION_TTL_SECONDS } from './session.ts'
 import { principalFromPlatform, UserStateUnavailable } from './forward-auth.ts'
@@ -96,7 +108,9 @@ function platformBlock(platform: Platform, mode: EmbedMode, homeGuild: string | 
   // tokenStorageKey is a key name, not a secret: the page reads the token itself on the platform's origin.
   const tokenStorageKey = mode === 'proxy' ? platform.userState?.tokenStorageKey ?? null : null
   // homeGuild: the guild this site's chatbox opens on first (bridge.<platform>.guild).
-  const data = JSON.stringify({ id: platform.id, name: platform.name, mode, origins: platform.allowedOrigins, links: platform.links, tokenStorageKey, chat: mode === 'proxy' && platform.chat, homeGuild })
+  // api: 'site' = the chatbox calls abulxt's API on the page's origin; 'holt' = under ./_holt/ (own accounts).
+  const api = usesSiteAccounts(platform) ? 'site' : 'holt'
+  const data = JSON.stringify({ id: platform.id, name: platform.name, mode, origins: platform.allowedOrigins, links: platform.links, tokenStorageKey, chat: mode === 'proxy' && platform.chat, homeGuild, api })
   return `<script type="application/json" id="holt-platform">${data.replace(/</g, '\\u003c')}</script>`
 }
 
@@ -212,8 +226,40 @@ function headerValue(value: string | string[] | undefined): string | null {
 
 const CHAT_API_ORIGIN = { host: '127.0.0.1', port: 8831 }
 const CHAT_API_PREFIX = '/_holt/api/discord/bridge/'
-/** Hop-by-hop headers, and holt's own license header, never go upstream. */
-const NOT_FORWARDED = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer', 'x-holt-license'])
+const RT_PATH = '/_holt/api/rt'
+/** Hop-by-hop headers, holt's own license header, and a principal only holt-service may set never go upstream. */
+const NOT_FORWARDED = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer', 'x-holt-license', PRINCIPAL_HEADER, FOREIGN_PAGE_HEADER])
+/** A proxy sign-in lasts this long; the page renews it every few minutes (embed/main.tsx). */
+const PROXY_SESSION_TTL_SECONDS = 15 * 60
+const WCS_COOKIE = /(?:^|;\s*)(wcs=[^;]*)/
+
+/**
+ * Who the caller is to holt-chat, as request headers. A platform on abulxt accounts: its own credentials
+ * pass through (abulxt's identity.ts resolves them). Any other platform: only the holt session counts,
+ * so its Authorization and Cookie are dropped (except the `wcs` seal seed) and the principal is signed.
+ */
+function callerHeaders(request: http.IncomingMessage, platform: Platform, config: HoltConfig, token: string | null): http.OutgoingHttpHeaders {
+  if (usesSiteAccounts(platform)) return {}
+  const out: http.OutgoingHttpHeaders = { authorization: undefined, cookie: undefined, [FOREIGN_PAGE_HEADER]: 'holt' }
+  const wcs = WCS_COOKIE.exec(request.headers.cookie ?? '')
+  if (wcs) out.cookie = wcs[1]
+  const principal = token ? readSession(token, config.sessionSecret) : null
+  if (principal && principal.platformId === platform.id) out[PRINCIPAL_HEADER] = signPrincipal(principal, config.sessionSecret)
+  return out
+}
+
+function upstreamHeaders(request: http.IncomingMessage, caller: http.OutgoingHttpHeaders, keep: (name: string) => boolean): http.OutgoingHttpHeaders {
+  const headers: http.OutgoingHttpHeaders = {}
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (value !== undefined && keep(name)) headers[name] = value
+  }
+  for (const [name, value] of Object.entries(caller)) {
+    if (value === undefined) delete headers[name]
+    else headers[name] = value
+  }
+  headers.host = `${CHAT_API_ORIGIN.host}:${CHAT_API_ORIGIN.port}`
+  return headers
+}
 
 /**
  * The chat API for a chat platform: /<id>/_holt/api/discord/bridge/* -> holt-chat /api/discord/bridge/*
@@ -221,13 +267,9 @@ const NOT_FORWARDED = new Set(['host', 'connection', 'keep-alive', 'proxy-connec
  * headers (X-Real-IP, X-Forwarded-For, CF-Connecting-IP); they pass through, because the bridge uses
  * them for IP bans and rate limits.
  */
-function proxyChatApi(request: http.IncomingMessage, response: http.ServerResponse, upstreamPath: string): Promise<void> {
+function proxyChatApi(request: http.IncomingMessage, response: http.ServerResponse, upstreamPath: string, caller: http.OutgoingHttpHeaders): Promise<void> {
   return new Promise((resolve) => {
-    const headers: http.OutgoingHttpHeaders = {}
-    for (const [name, value] of Object.entries(request.headers)) {
-      if (value !== undefined && !NOT_FORWARDED.has(name)) headers[name] = value
-    }
-    headers.host = `${CHAT_API_ORIGIN.host}:${CHAT_API_ORIGIN.port}`
+    const headers = upstreamHeaders(request, caller, (name) => !NOT_FORWARDED.has(name))
     const upstream = http.request({ ...CHAT_API_ORIGIN, method: request.method, path: upstreamPath, headers }, (answer) => {
       const out: http.OutgoingHttpHeaders = {}
       for (const [name, value] of Object.entries(answer.headers)) {
@@ -381,7 +423,12 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     }
     if (rest.startsWith(CHAT_API_PREFIX)) {
       if (!proxyPlatform.chat) return sendJson(response, 404, { error: 'not found' })
-      return proxyChatApi(request, response, `/api/discord/bridge/${rest.slice(CHAT_API_PREFIX.length)}${url.search}`)
+      const caller = callerHeaders(request, proxyPlatform, config, bearer(request))
+      return proxyChatApi(request, response, `/api/discord/bridge/${rest.slice(CHAT_API_PREFIX.length)}${url.search}`, caller)
+    }
+    // A chat platform with its own accounts: the sign-in exchange and the chatbox's account endpoints.
+    if (proxyPlatform.chat && !usesSiteAccounts(proxyPlatform) && (rest === '/_holt/session' || rest.startsWith('/_holt/api/'))) {
+      return handleOwnAccounts(request, response, config, proxyPlatform, rest)
     }
     if (rest === '/_holt/me') {
       if (method !== 'GET') return sendJson(response, 405, { error: 'method not allowed' })
@@ -416,6 +463,108 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   sendText(response, 404, 'text/plain; charset=utf-8', 'not found')
 }
 
+/**
+ * The sign-in exchange and the account endpoints the chatbox calls, for a chat platform with its own
+ * accounts. Everything account-related (settings, email verification, sign-in) belongs to the platform:
+ * the chatbox links there (platform.links), holt only says who is signed in.
+ */
+async function handleOwnAccounts(request: http.IncomingMessage, response: http.ServerResponse, config: HoltConfig, platform: Platform, rest: string): Promise<void> {
+  const method = request.method ?? 'GET'
+  response.setHeader('Cache-Control', 'private, no-store')
+  if (rest === '/_holt/session') {
+    if (method !== 'POST') return sendJson(response, 405, { error: 'method not allowed' })
+    // A cross-site page cannot set this header without a CORS preflight, which holt never answers here.
+    if (request.headers['x-holt'] !== '1') return sendJson(response, 403, { error: 'missing X-Holt header' })
+    let principal: Principal | null
+    try {
+      principal = await principalFromPlatform(platform, { cookie: request.headers.cookie, authorization: request.headers.authorization })
+    } catch (error) {
+      if (!(error instanceof UserStateUnavailable)) throw error
+      console.warn(`[holt] ${platform.id} user state unavailable: ${error.message}`)
+      return sendJson(response, 503, { error: 'Could not reach the site to check who you are.' })
+    }
+    if (!principal) return sendJson(response, 200, { session: null, links: platform.links })
+    const now = Date.now()
+    return sendJson(response, 200, {
+      session: issueSession(principal, config.sessionSecret, now, PROXY_SESSION_TTL_SECONDS),
+      expiresAt: now + PROXY_SESSION_TTL_SECONDS * 1000,
+      principal: publicPrincipal(principal, config),
+      links: platform.links,
+    })
+  }
+  const token = bearer(request)
+  // Captcha (config + verify) is served by holt-chat's API guard, which gates the chat API's writes.
+  if (rest.startsWith('/_holt/api/captcha/')) {
+    const search = new URL(request.url ?? '/', 'http://holt.local').search
+    return proxyChatApi(request, response, `${rest.slice('/_holt'.length)}${search}`, callerHeaders(request, platform, config, token))
+  }
+  const principal = token ? readSession(token, config.sessionSecret) : null
+  const own = principal && principal.platformId === platform.id ? principal : null
+  if (rest === '/_holt/api/auth/me') {
+    if (method !== 'GET') return sendJson(response, 405, { error: 'method not allowed' })
+    if (!own) return sendJson(response, 401, { error: 'Sign in to continue.' })
+    // The chatbox's account shape (lib/auth-api.ts AbulxtUser). id 0: not an abulxt account; the chat
+    // API identifies this user by their key, never by id.
+    return sendJson(response, 200, {
+      user: {
+        id: 0, username: own.name, email: null, emailVerified: own.emailVerified, admin: false,
+        createdAt: new Date(0).toISOString(), chatDisplayName: null, presenceStatus: null, discord: null,
+        key: own.key, platform: platform.id,
+      },
+    })
+  }
+  if (!own) return sendJson(response, 401, { error: 'Sign in to continue.' })
+  // Set Status: presence is tracked for abulxt accounts only; the choice is accepted and not stored.
+  if (rest === '/_holt/api/auth/presence' && method === 'POST') return sendJson(response, 200, { status: 'online', shown: 'online' })
+  if (rest === '/_holt/api/auth/resend-verification' && method === 'POST') {
+    return sendJson(response, 400, { error: `Verify your email on ${platform.name}.`, verifyEmail: platform.links.verifyEmail ?? platform.links.account })
+  }
+  // The server rail layout (folders) is kept for abulxt accounts only; others get Discord's default order.
+  if (rest === '/_holt/api/account/guild-folders') return sendJson(response, 200, { guildFolders: [] })
+  return sendJson(response, 404, { error: 'not found' })
+}
+
+/**
+ * WS /<id>/_holt/api/rt for a chat platform with its own accounts: license, then the caller (the holt
+ * session the chatbox passes as ?token=), then a raw upgrade pass-through to holt-chat's /api/rt.
+ */
+function handleUpgrade(request: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer, config: HoltConfig): void {
+  const refuse = (status: string) => { socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`) }
+  const url = new URL(request.url ?? '/', 'http://holt.local')
+  const proxied = PROXY_PATH.exec(url.pathname)
+  const platform = proxied ? platformById(config.platforms, proxied[1]!) : null
+  if (!proxied || !platform || proxied[2] !== RT_PATH) return refuse('404 Not Found')
+  if (licenseRefusal(config, platform, headerValue(request.headers['x-holt-license']))) return refuse('403 Forbidden')
+  if (!platform.chat || !platform.userState || usesSiteAccounts(platform)) return refuse('404 Not Found')
+  const caller = callerHeaders(request, platform, config, url.searchParams.get('token'))
+  // The token stays here: holt-chat gets the signed principal instead.
+  const keep = (name: string) => name !== 'host' && name !== 'x-holt-license' && name !== PRINCIPAL_HEADER && name !== FOREIGN_PAGE_HEADER
+  const upstream = http.request({ ...CHAT_API_ORIGIN, method: 'GET', path: '/api/rt', headers: upstreamHeaders(request, caller, keep) })
+  upstream.on('upgrade', (answer, upstreamSocket, upstreamHead) => {
+    let raw = `HTTP/1.1 ${answer.statusCode} ${answer.statusMessage}\r\n`
+    for (let i = 0; i < answer.rawHeaders.length; i += 2) raw += `${answer.rawHeaders[i]}: ${answer.rawHeaders[i + 1]}\r\n`
+    socket.write(raw + '\r\n')
+    if (upstreamHead.length) socket.write(upstreamHead)
+    if (head.length) upstreamSocket.write(head)
+    upstreamSocket.pipe(socket).pipe(upstreamSocket)
+    const close = () => { socket.destroy(); upstreamSocket.destroy() }
+    socket.on('error', close)
+    upstreamSocket.on('error', close)
+    socket.on('close', close)
+    upstreamSocket.on('close', close)
+  })
+  upstream.on('response', (answer) => {
+    refuse(`${answer.statusCode ?? 502} ${answer.statusMessage ?? 'Bad Gateway'}`)
+    answer.resume()
+  })
+  upstream.on('error', (error) => {
+    console.warn(`[holt] realtime unreachable: ${error.message}`)
+    refuse('502 Bad Gateway')
+  })
+  socket.on('error', () => upstream.destroy())
+  upstream.end()
+}
+
 async function main(): Promise<void> {
   const config = await loadConfig()
   const shell = loadEmbedShell()
@@ -425,6 +574,14 @@ async function main(): Promise<void> {
       if (!response.headersSent) sendJson(response, 500, { error: 'internal error' })
       else response.end()
     })
+  })
+  server.on('upgrade', (request, socket, head) => {
+    try {
+      handleUpgrade(request, socket, head, config)
+    } catch (error) {
+      console.error('[holt] upgrade failed:', error instanceof Error ? error.message : error)
+      socket.destroy()
+    }
   })
   server.listen(config.port, '127.0.0.1', () => {
     console.log(`[holt] listening on 127.0.0.1:${config.port} for ${config.platforms.map((p) => p.id).join(', ')} (${shell.scriptHashes.length} inline script hash(es))`)

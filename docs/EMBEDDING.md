@@ -72,6 +72,24 @@ trusts anything the page says about who is signed in, and never calls a URL take
 - holt's own requests carry an `X-Holt` header that other sites cannot add, so a page elsewhere
   cannot act as your visitor.
 
+## Your users in the chat
+
+Your signed-in visitors chat as themselves, as equals with every other site's users and with Discord:
+they read, post, edit and delete their own messages, react, see typing and new messages live, and answer
+each Discord server's onboarding (which gives them that server's roles, so the same channels open up as for
+anyone else). Their chat identity is `<your platform id>:<your user id>`; moderation (timeouts, bans,
+channel overrides) applies to it like to anyone. Every bridged server shows in the server rail; your
+site's own server, if you have one, is where the chat opens first.
+
+Nothing extra to proxy: the chat calls its API and realtime socket under `/chat/_holt/`, which your
+`/chat/` rule already sends to holt. holt asks your user-state endpoint who is signed in when the chat
+loads (and every few minutes), and hands the chat a short session of its own; your cookies and tokens go
+only to your endpoint, never to the chat service. Signing out on your site signs the chat out within a
+few minutes (at once in other tabs if your login lives in localStorage).
+
+Posting needs `email_verified: true` (or your equivalent field). Profiles show the name your endpoint
+returns; avatars are Discord's defaults for now.
+
 ## Can't proxy? Iframe embedding
 
 Sites that cannot add proxy rules can embed with an iframe and a signed identity token instead (more

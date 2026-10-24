@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { signJwt } from '../src/server/jwt.ts'
 import { mintLicense } from '../src/server/license.ts'
+import { readPrincipal } from '../src/server/chat-caller.ts'
 
 const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome'
@@ -51,22 +52,23 @@ const partnerOrigin = `http://localhost:${partnerPort}`
 // Licensing is on, as in production: every embed needs a license minted with this secret.
 const LICENSE_SECRET = 'e2e-license-secret-0123456789abcdef0123456789abcdef'
 const license = (platform, options = {}) => mintLicense(LICENSE_SECRET, { platform, ...options })
-const LICENSES = { partner: license('partner').token, proxied: license('proxied').token, tokened: license('tokened').token }
+const LICENSES = { partner: license('partner').token, proxied: license('proxied').token, tokened: license('tokened').token, fed: license('fed').token }
 const REVOKED = license('proxied')
 const EXPIRED = mintLicense(LICENSE_SECRET, { platform: 'proxied', days: 1 }, Date.now() - 2 * 86_400_000)
 // Signed by this holt for `proxied`, but not listed in `bridge`: the register refuses it.
 const UNREGISTERED = license('proxied')
 
+const SESSION_SECRET = 'e2e-session-secret-0123456789abcdef0123456789abcdef'
 const tempDir = mkdtempSync(path.join(tmpdir(), 'holt-e2e-'))
 const configFile = path.join(tempDir, 'config.js')
 writeFileSync(configFile, `export default ${JSON.stringify({
   port: holtPort,
   publicOrigin: holtOrigin,
-  sessionSecret: 'e2e-session-secret-0123456789abcdef0123456789abcdef',
+  sessionSecret: SESSION_SECRET,
   admins: [],
   licensing: { secret: LICENSE_SECRET, revoked: [REVOKED.license.lid] },
   // The license register (bridge-config.ts): only these licenses count.
-  bridge: { partner: { license: LICENSES.partner }, proxied: { license: LICENSES.proxied }, tokened: { license: LICENSES.tokened } },
+  bridge: { partner: { license: LICENSES.partner }, proxied: { license: LICENSES.proxied }, tokened: { license: LICENSES.tokened }, fed: { license: LICENSES.fed } },
   platforms: [{
     id: 'partner',
     name: 'Partner',
@@ -102,6 +104,14 @@ writeFileSync(configFile, `export default ${JSON.stringify({
       fields: { id: 'user.id', name: 'user.username', emailVerified: 'user.emailVerified', avatar: null },
       tokenStorageKey: 'partner:auth-token',
     },
+  }, {
+    // A chat platform with its own accounts (federation): mounted at /fchat/, cookie login.
+    id: 'fed',
+    name: 'Fed',
+    allowedOrigins: [partnerOrigin],
+    links: { account: `${partnerOrigin}/account`, settings: `${partnerOrigin}/settings` },
+    userState: { url: `${partnerOrigin}/fchat/api/me`, cookies: ['sid'] },
+    chat: true,
   }],
 })}\n`)
 
@@ -152,6 +162,12 @@ function partnerServer(port) {
         return response.end(JSON.stringify({ user: { id: 2921, username: 'midnight', emailVerified: true } }))
       }
       if (url.pathname.startsWith('/tchat/')) return proxyToHolt(request, response, request.url.slice('/tchat/'.length), 'tokened')
+      if (url.pathname === '/fchat/api/me') {
+        const signedIn = /(?:^|;\s*)sid=s_good(?:;|$)/.test(request.headers.cookie ?? '')
+        response.setHeader('Content-Type', 'application/json')
+        if (!signedIn) { response.statusCode = 401; return response.end('{"error":"signed out"}') }
+        return response.end(JSON.stringify({ id: 77, username: 'Night Owl', email_verified: true }))
+      }
       if (url.pathname === '/token') {
         const iat = Math.floor(Date.now() / 1000)
         response.end(signJwt({ iss: partnerOrigin, aud: 'holt', sub: 'u_77', iat, exp: iat + 120, jti: `e2e-${Math.random()}`, name: 'Night Owl', email_verified: false }, SECRET))
@@ -164,6 +180,20 @@ function partnerServer(port) {
     server.listen(port, 'localhost', () => resolve(server))
   })
 }
+
+// holt-chat's port, answered by a stand-in that echoes the request it got (federation checks).
+const chatEcho = await new Promise((resolve) => {
+  const server = http.createServer((request, response) => {
+    response.setHeader('Content-Type', 'application/json')
+    response.end(JSON.stringify({ path: request.url, headers: request.headers }))
+  })
+  server.on('upgrade', (request, socket) => {
+    const echo = Buffer.from(JSON.stringify({ path: request.url, headers: request.headers })).toString('base64')
+    socket.end(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nX-Echo: ${echo}\r\n\r\n`)
+  })
+  server.once('error', () => resolve(null))
+  server.listen(8831, '127.0.0.1', () => resolve(server))
+})
 
 const results = []
 function check(name, ok, detail = '') {
@@ -363,6 +393,56 @@ try {
     check('proxy API: an iframe-only platform has no proxy page', iframeOnly === 404, String(iframeOnly))
   }
 
+  // Federation: a chat platform with its own accounts. holt-service alone decides who the caller is for
+  // holt-chat; a stand-in on holt-chat's port echoes what it was sent. Skipped when that port is taken (a
+  // local holt-chat): the stand-in must be what answers.
+  if (chatEcho) {
+    const fed = (rest, init = {}) => fetch(`${holtOrigin}/fed${rest}`, { ...init, headers: { 'x-holt-license': LICENSES.fed, ...(init.headers || {}) } })
+    const json = async (r) => ({ status: r.status, body: await r.json().catch(() => null) })
+    check('federation: sign-in needs the X-Holt header', (await fed('/_holt/session', { method: 'POST', headers: { cookie: 'sid=s_good' } })).status === 403)
+    const out = await json(await fed('/_holt/session', { method: 'POST', headers: { 'x-holt': '1' } }))
+    check('federation: signed out on the platform = no session', out.status === 200 && out.body.session === null, JSON.stringify(out))
+    const signIn = await json(await fed('/_holt/session', { method: 'POST', headers: { 'x-holt': '1', cookie: 'sid=s_good' } }))
+    const session = signIn.body?.session
+    check('federation: signed in on the platform = a holt session for fed:77', typeof session === 'string' && signIn.body.principal?.key === 'fed:77', JSON.stringify(signIn).slice(0, 200))
+    const me = await json(await fed('/_holt/api/auth/me', { headers: { authorization: `Bearer ${session}` } }))
+    check('federation: "who am I" answers for the session', me.status === 200 && me.body.user?.key === 'fed:77' && me.body.user?.username === 'Night Owl', JSON.stringify(me))
+    check('federation: "who am I" without a session is signed out', (await fed('/_holt/api/auth/me')).status === 401)
+
+    const echoed = await json(await fed('/_holt/api/discord/bridge/guilds', { headers: {
+      authorization: `Bearer ${session}`, cookie: 'sid=s_good; wcs=seedvalue', 'x-holt-principal': 'forged.forged', 'x-holt-api': 'site',
+    } }))
+    const h = echoed.body?.headers || {}
+    const principal = typeof h['x-holt-principal'] === 'string' ? readPrincipal(h['x-holt-principal'], SESSION_SECRET) : null
+    check('federation: the chat API gets a signed principal for the session', principal?.key === 'fed:77', JSON.stringify(h).slice(0, 300))
+    check('federation: the partner\'s Authorization and cookies never reach the chat API (only the wcs seed)', h.authorization === undefined && h.cookie === 'wcs=seedvalue', JSON.stringify(h).slice(0, 300))
+    check('federation: the page is marked foreign, whatever the caller claimed', h['x-holt-api'] === 'holt' && h['x-holt-license'] === undefined)
+    const forgedOnly = await json(await fed('/_holt/api/discord/bridge/guilds', { headers: { 'x-holt-principal': echoed.body?.headers?.['x-holt-principal'] || 'x' } }))
+    check('federation: a replayed or forged principal header without a session is dropped', forgedOnly.body?.headers?.['x-holt-principal'] === undefined, JSON.stringify(forgedOnly.body).slice(0, 200))
+
+    const upgrade = await new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port: holtPort, path: `/fed/_holt/api/rt?token=${encodeURIComponent(session)}`, headers: {
+        connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', 'x-holt-license': LICENSES.fed, 'x-holt-principal': 'forged.forged',
+      } })
+      req.on('upgrade', (answer, socket) => { socket.destroy(); resolve(JSON.parse(Buffer.from(String(answer.headers['x-echo'] || ''), 'base64').toString() || '{}')) })
+      req.on('response', (answer) => { answer.resume(); resolve({ status: answer.statusCode }) })
+      req.on('error', (error) => resolve({ error: error.message }))
+      req.end()
+    })
+    const rtPrincipal = typeof upgrade.headers?.['x-holt-principal'] === 'string' ? readPrincipal(upgrade.headers['x-holt-principal'], SESSION_SECRET) : null
+    check('federation: realtime upgrades reach holt-chat as the session\'s user, token kept out of the path', rtPrincipal?.key === 'fed:77' && upgrade.path === '/api/rt', JSON.stringify(upgrade).slice(0, 300))
+    const unlicensedRt = await new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port: holtPort, path: '/fed/_holt/api/rt', headers: { connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==' } })
+      req.on('upgrade', (_a, socket) => { socket.destroy(); resolve(101) })
+      req.on('response', (answer) => { answer.resume(); resolve(answer.statusCode) })
+      req.on('error', () => resolve('error'))
+      req.end()
+    })
+    check('federation: realtime refused without a license', unlicensedRt === 403, String(unlicensedRt))
+  } else {
+    console.log('SKIP  federation checks: 127.0.0.1:8831 is in use (a local holt-chat?)')
+  }
+
   // Visited directly, not framed.
   {
     const page = await browser.newPage()
@@ -380,6 +460,7 @@ try {
 } finally {
   await browser?.close()
   for (const server of partners) server.close()
+  chatEcho?.close()
   holt.kill('SIGTERM')
   rmSync(tempDir, { recursive: true, force: true })
 }

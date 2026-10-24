@@ -27,7 +27,7 @@ import {
   type OnboardingConfig,
   type OnboardingStateRow,
 } from './discord-onboarding.js'
-import { siteChatKey, siteChatKeys, siteIdOfChatKey } from './chat-identity-key.ts'
+import { chatKeyOfUser, siteChatKey, siteChatKeys, siteIdOfChatKey, type ChatSubjectUser } from './chat-identity-key.ts'
 
 // Discord-side channel visibility for the web chatbox, per bridged guild
 // (every function takes the guild the channel / perms belong to).
@@ -369,7 +369,7 @@ function forgetMemberRoles(discordId: string): void {
 // non-member there, like on Discord). chatRoles.member floor roles count only
 // when they exist in that guild.
 export async function resolveEffectiveRoles(
-  user: { id?: number | null; discord_id?: string | null } | null | undefined,
+  user: ChatSubjectUser | null | undefined,
   perms: Pick<ChatPerms, 'tier' | 'roleId' | 'siteAdmin'>,
   guildId: string,
 ): Promise<{ memberId: string | null; roleIds: string[] }> {
@@ -382,7 +382,7 @@ export async function resolveEffectiveRoles(
   }
   const snap = memberFloorRoles.length ? await guildSnapshot(guildId) : null
   if (snap) memberFloorRoles = memberFloorRoles.filter((id) => snap.roles.has(id))
-  const onboardingRoles = memberRoles ? [] : await onboardingRolesFor(user?.id ?? null, guildId).catch(() => [])
+  const onboardingRoles = memberRoles ? [] : await onboardingRolesFor(chatKeyOfUser(user), guildId).catch(() => [])
   const roleIds = unionEffectiveRoles({
     memberRoles,
     chatRoleId: perms.roleId,
@@ -477,11 +477,12 @@ export function onboardingIdentityKey(userId: number): string {
   return siteChatKey(userId)
 }
 
-async function onboardingRolesFor(userId: number | null, guildId: string): Promise<string[]> {
-  if (userId === null) return []
+// `key` = the caller's chat identity key (chatKeyOfUser): a site account or another platform's identity.
+async function onboardingRolesFor(key: string | null, guildId: string): Promise<string[]> {
+  if (key === null) return []
   const snap = guildId ? await guildSnapshot(guildId) : null
   if (!snap) return []
-  const row = await loadOnboardingState(guildId, onboardingIdentityKey(userId))
+  const row = await loadOnboardingState(guildId, key)
   if (!row || !row.responses.length) return []
   const config = await onboardingConfig(guildId, { roles: snap.roles, channels: snap.byId })
   return emulatedRoleIds(config, row.responses, snap.roles)
@@ -523,15 +524,15 @@ export interface OnboardingView {
 // The caller's onboarding config + effective state in one bridged guild.
 // null when the guild snapshot is unavailable.
 export async function onboardingView(
-  user: { id?: number | null; discord_id?: string | null } | null | undefined,
+  user: ChatSubjectUser | null | undefined,
   guildId: string,
 ): Promise<OnboardingView | null> {
   const snap = guildId ? await guildSnapshot(guildId) : null
   if (!snap) return null
   const config = await onboardingConfig(guildId, { roles: snap.roles, channels: snap.byId }).catch(() => null)
   const member = Boolean(user?.discord_id && (await cachedMemberRoles(user.discord_id, guildId)))
-  if (user?.id == null) return { guildId, snapshot: snap, config, row: null, persisted: false, member }
-  const key = onboardingIdentityKey(user.id)
+  const key = chatKeyOfUser(user)
+  if (key === null) return { guildId, snapshot: snap, config, row: null, persisted: false, member }
   const stored = await loadOnboardingState(guildId, key)
   const row = stored || defaultStateRow(member || (await hasChatHistory(key, guildId)))
   return { guildId, snapshot: snap, config, row, persisted: Boolean(stored), member }
@@ -931,7 +932,7 @@ export interface SocketVisibility {
 export const VISIBILITY_TTL_MS = 45_000
 const visibilityCache = new Map<string, { expires: number; value: Promise<SocketVisibility> }>()
 
-type VisibilityUser = { id?: number | null; discord_id?: string | null; admin?: boolean } | null | undefined
+type VisibilityUser = (ChatSubjectUser & { admin?: boolean }) | null | undefined
 
 async function computeVisibility(user: VisibilityUser): Promise<SocketVisibility> {
   await loadConfig()

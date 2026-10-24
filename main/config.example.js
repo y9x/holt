@@ -75,6 +75,9 @@ export default {
   //     tokenStorageKey  Optional, for logins kept in localStorage instead of a cookie (abulxt):
   //                      the page reads this key on the platform's origin and holt forwards the
   //                      token to `url` as `Authorization: Bearer`. Unset: cookies only.
+  //   chat               Optional, proxy platforms: the full chatbox. A platform on abulxt accounts
+  //                      uses abulxt's API on its own origin; any other platform's users chat through
+  //                      holt (`/chat/_holt/api/...`, no extra proxy rule), as `<namespace>:<id>`.
   //   issuer             Iframe embedding: the `iss` claim of the platform's identity tokens.
   //   secret             HS256 secret the platform signs identity tokens with. Per account
   //                      system; never shared with a platform in another namespace.
@@ -129,6 +132,7 @@ export default {
         account: 'https://nocturne.lol/',
         settings: 'https://nocturne.lol/',
       },
+      chat: true,
     },
   ],
 }

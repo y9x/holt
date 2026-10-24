@@ -1,17 +1,17 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { Identity } from './identity.js'
+import type { ChatIdentity as Identity } from './chat-caller.ts'
 import { DISCORD_BRIDGE_OWNER_KEY, emit } from './events.js'
 import { rateLimit, sendRateLimited } from './rate-limit.ts'
 import { Perm, bypassesOverwrites, chatPermsForUser, hasPerm, subjectOfUser, webhookKeys, webhookOverwrites } from './discord-chat-perms.js'
 import { bridgedGuildIds, listChannels } from './discord-bridge-db.js'
 import { parseRequestUrl } from './request-url.ts'
+import { chatKeyOfUser } from './chat-identity-key.ts'
 import {
   DiscordChannelType,
   RENDERABLE_CHANNEL_TYPES,
   buildSidebar,
   canViewChannel,
   invalidateIdentityVisibility,
-  onboardingIdentityKey,
   onboardingView,
   viewerFor,
   type ChannelViewer,
@@ -203,7 +203,8 @@ export async function handleOnboardingRequest(
   if (!limit.ok) {
     return sendRateLimited(response, limit.retryAfterSec, limit.error)
   }
-  const key = onboardingIdentityKey(identity.user.id)
+  // A site account's `abulxt:<id>`, or another platform's user's ext key: same state, same emulated roles.
+  const key = chatKeyOfUser(identity.user)!
   const config = view.config
   let row = view.row
 

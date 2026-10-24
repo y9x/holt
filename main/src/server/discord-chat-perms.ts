@@ -1,7 +1,7 @@
 import { getConfig } from './config.js'
 import { query } from './db.js'
 import { cachedGuildMemberRoles } from './discord-roles.js'
-import { siteChatKey, siteIdOfChatKey } from './chat-identity-key.ts'
+import { siteChatKey, siteIdOfChatKey, type ChatSubjectUser } from './chat-identity-key.ts'
 
 // Chat permissions as Discord-style permission bitfields over guild roles -
 // NOT site admin. "Webhooks" are the webhook delivery identities (web users and
@@ -219,7 +219,7 @@ export async function chatPermsForUser(
   const base = user.discord_id ? await discordRolePerms(user.discord_id, guildId) : GUEST
   // Site admins inherit the admin tier (applySiteAdmin), linked or not.
   const admined = applySiteAdmin(base, user.admin ? await siteAdminRole(guildId) : null)
-  return withEffectiveRolesSafe(user as { id?: number | null; discord_id?: string | null }, admined, guildId)
+  return withEffectiveRolesSafe(user as ChatSubjectUser, admined, guildId)
 }
 
 // Attach the identity's effective guild roles (tier/perk-mapped chat roles ∪
@@ -229,7 +229,7 @@ export async function chatPermsForUser(
 // imported lazily to keep the static import graph acyclic. Resolution
 // failures keep the tier-only perms (the pre-roles behavior).
 async function withEffectiveRolesSafe(
-  user: { id?: number | null; discord_id?: string | null },
+  user: ChatSubjectUser,
   perms: ChatPerms,
   guildId: string,
 ): Promise<ChatPerms> {
@@ -493,9 +493,10 @@ export function parseWebhookTarget(raw: unknown): WebhookTarget | null {
   return ext ? { kind: 'ext', key: ext } : null
 }
 
-// The caller's own webhook subject (a signed-in site user).
-export function subjectOfUser(user: { id?: number | null; discord_id?: string | null } | null | undefined): WebhookSubject {
-  return { userId: user?.id ?? null, discordId: user?.discord_id || null, extKey: null }
+// The caller's own webhook subject (a signed-in site user, or another platform's identity via holt).
+export function subjectOfUser(user: ChatSubjectUser | null | undefined): WebhookSubject {
+  const extKey = user?.id == null && user?.ext_key ? extKeyOf(user.ext_key) : null
+  return { userId: user?.id ?? null, discordId: user?.discord_id || null, extKey }
 }
 
 // Every author/reactor key this webhook appears under.
@@ -558,7 +559,8 @@ export async function resolveWebhookTarget(target: WebhookTarget): Promise<Webho
 // identities through their roles in that guild.
 export async function chatPermsForIdentity(identity: WebhookIdentity, guildId: string): Promise<ChatPerms> {
   if (identity.user) return chatPermsForUser(identity.user, guildId)
-  return withEffectiveRolesSafe({ id: null, discord_id: identity.discordId }, await chatPermsForDiscord(identity.discordId, guildId), guildId)
+  // Another platform's identity (extKey) holds the roles its onboarding answers in this guild grant.
+  return withEffectiveRolesSafe({ id: null, discord_id: identity.discordId, ext_key: identity.extKey }, await chatPermsForDiscord(identity.discordId, guildId), guildId)
 }
 
 // A site account's Discord-side state changed: its effective roles, channel

@@ -5,10 +5,10 @@
 //   npm run chat-api        127.0.0.1:8831, reached only through holt-service's licensed proxy
 //                           (/<platform>/_holt/api/discord/bridge/* -> /api/discord/bridge/*).
 //
-// The realtime socket (/api/rt) is NOT here: it also carries the platform's own account and AI events,
-// so it stays on the platform. Chat events emitted here reach those sockets through the Postgres
-// NOTIFY relay (events.ts), the same way the bot's do; this process starts the relay too, so its own
-// caches hear about changes made elsewhere.
+// Realtime: abulxt accounts keep abulxt's own /api/rt (it also carries their account and AI events); chat
+// events emitted here reach those sockets through the Postgres NOTIFY relay (events.ts), the same way the
+// bot's do. Other platforms' users get this process's /api/rt (chat-rt.ts), reached as holt-service's
+// WS /<platform>/_holt/api/rt. The relay runs here either way, so caches and sockets hear every change.
 
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +18,7 @@ import { configureDatabase } from './src/server/db.ts'
 import { startEventRelay } from './src/server/events.ts'
 import { apiGuard } from './src/server/api-guard.ts'
 import { discordBridgeApi } from './src/server/discord-bridge-api.ts'
+import { chatRt } from './src/server/chat-rt.ts'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -45,5 +46,5 @@ export default defineConfig({
     cors: false,
     allowedHosts: true,
   },
-  plugins: [chatRuntime(), apiGuard(), discordBridgeApi()],
+  plugins: [chatRuntime(), apiGuard(), discordBridgeApi(), chatRt()],
 })

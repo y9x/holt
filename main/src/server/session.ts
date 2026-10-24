@@ -10,12 +10,13 @@ import type { Principal } from './identity-token.ts'
 export const SESSION_TTL_SECONDS = 12 * 60 * 60
 const TYP = 'holt-session'
 
-export function issueSession(principal: Principal, secret: string, nowMs = Date.now()): string {
+/** `ttlSeconds`: proxy sign-ins (holt-service `_holt/session`) are short and renewed by the page. */
+export function issueSession(principal: Principal, secret: string, nowMs = Date.now(), ttlSeconds = SESSION_TTL_SECONDS): string {
   const now = Math.floor(nowMs / 1000)
   return signJwt({
     typ: TYP,
     iat: now,
-    exp: now + SESSION_TTL_SECONDS,
+    exp: now + ttlSeconds,
     key: principal.key,
     platform: principal.platformId,
     name: principal.name,

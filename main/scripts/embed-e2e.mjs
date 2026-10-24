@@ -352,7 +352,9 @@ try {
     const chatApi = (headers = {}) => fetch(`${holtOrigin}/proxied/_holt/api/discord/bridge/guilds`, { headers }).then((r) => r.status)
     check('chat API route: refused without a license', await chatApi() === 403)
     check('chat API route: not offered to a platform without chat', await chatApi({ 'x-holt-license': LICENSES.proxied }) === 404)
-    const iframeOnly = await fetch(`${holtOrigin}/partner/`).then((r) => r.status)
+    const iframeOnlyUnlicensed = await fetch(`${holtOrigin}/partner/`).then((r) => r.status)
+    check('proxy API: an unlicensed caller cannot tell how a platform embeds (403, not 404)', iframeOnlyUnlicensed === 403, String(iframeOnlyUnlicensed))
+    const iframeOnly = await fetch(`${holtOrigin}/partner/`, { headers: { 'x-holt-license': LICENSES.partner } }).then((r) => r.status)
     check('proxy API: an iframe-only platform has no proxy page', iframeOnly === 404, String(iframeOnly))
   }
 

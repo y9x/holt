@@ -276,12 +276,13 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     if (method !== 'GET') return sendText(response, 405, 'text/plain; charset=utf-8', 'method not allowed')
     const platform = platformById(config.platforms, url.searchParams.get('platform') ?? '')
     if (!platform) return sendText(response, 404, 'text/plain; charset=utf-8', 'unknown platform')
-    if (platform.secret === null) return sendText(response, 404, 'text/plain; charset=utf-8', 'this platform embeds by proxy')
+    // License first: an unlicensed caller learns nothing about how a platform embeds.
     const refused = licenseRefusal(config, platform, url.searchParams.get('license'))
     if (refused) {
       console.warn(`[holt] ${platform.id}: embed refused (license ${refused})`)
       return sendText(response, 403, 'text/plain; charset=utf-8', UNLICENSED_TEXT)
     }
+    if (platform.secret === null) return sendText(response, 404, 'text/plain; charset=utf-8', 'this platform embeds by proxy')
     // The browser enforces who may frame this page. X-Frame-Options is left out: CSP supersedes it.
     response.setHeader('Content-Security-Policy', embedCsp(platform, shell, 'iframe'))
     response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -342,15 +343,16 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   const proxied = PROXY_PATH.exec(url.pathname)
   const proxyPlatform = proxied ? platformById(config.platforms, proxied[1]!) : null
   if (proxied && proxyPlatform) {
-    if (!proxyPlatform.userState) return sendText(response, 404, 'text/plain; charset=utf-8', 'this platform embeds by iframe')
     const rest = proxied[2] ?? ''
     // Everything under /<id>/ needs the platform's license, added by its proxy (the browser never has it).
+    // Checked before anything else, so an unlicensed caller learns nothing about how a platform embeds.
     const refused = licenseRefusal(config, proxyPlatform, headerValue(request.headers['x-holt-license']))
     if (refused) {
       if (rest === '/' || rest === '') console.warn(`[holt] ${proxyPlatform.id}: proxy page refused (license ${refused})`)
       if (rest === '/_holt/me') return sendJson(response, 403, { error: UNLICENSED_TEXT, code: 'unlicensed' })
       return sendText(response, 403, 'text/plain; charset=utf-8', UNLICENSED_TEXT)
     }
+    if (!proxyPlatform.userState) return sendText(response, 404, 'text/plain; charset=utf-8', 'this platform embeds by iframe')
     // `/<id>` without the slash: relative asset URLs would resolve one level too high. Absolute on holt's
     // origin, so nginx's default proxy_redirect turns it back into the platform's own `/chat/`.
     if (rest === '') {

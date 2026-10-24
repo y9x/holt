@@ -19,3 +19,11 @@ same path in both repos and stay byte-identical.
   only (`SHIELD_MODE=manifest` is a local debug opt-out, never committed), every build passes the
   obfuscator then the canary check (exit 2 on a hit, no opt-out), every user-visible string is
   wrapped (see `main/src/components/common/HOLYTEXT.md`).
+
+## What holt owns outright
+
+The chat API moved to holt on 2026-10-24 and was deleted from abulxt: `discord-bridge-api.ts`,
+`discord-onboarding-api.ts`, `discord-unfurl.ts`, `discord-author-style.ts`, `discord-cdn-refresh.ts`,
+`discord-embed-suppress.ts`, `discord-guild-tag.ts`, `discord-mention-limits.ts`. Change them here. The
+modules they import that abulxt still uses (database, events, permissions, channel access, presence)
+stay vendored: change those in abulxt first.

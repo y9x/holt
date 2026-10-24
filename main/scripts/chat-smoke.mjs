@@ -5,6 +5,9 @@
 //   CHAT_API=https://abstracteducation.loan/api/discord/bridge \
 //   HOLT_TEST_TOKEN_FILE=~/.holt-test-token node main/scripts/chat-smoke.mjs
 //
+// Straight at holt on amph: CHAT_API=http://127.0.0.1:8830/abulxt/_holt/api/discord/bridge
+//   HOLT_TEST_TOKEN_FILE=/root/holt-test/token HOLT_LICENSE_FILE=/root/holt-licenses/abulxt.license
+//
 // Prints no token. Exits non-zero on the first failed check, after deleting the test message if it got
 // that far.
 
@@ -14,6 +17,8 @@ import { homedir } from 'node:os'
 const API = (process.env.CHAT_API || 'https://abstracteducation.loan/api/discord/bridge').replace(/\/+$/, '')
 const tokenFile = (process.env.HOLT_TEST_TOKEN_FILE || '~/.holt-test-token').replace(/^~/, homedir())
 const TOKEN = readFileSync(tokenFile, 'utf8').trim()
+// Straight at holt (bypassing a platform's proxy): send the platform's license like its proxy would.
+const LICENSE = process.env.HOLT_LICENSE_FILE ? readFileSync(process.env.HOLT_LICENSE_FILE.replace(/^~/, homedir()), 'utf8').trim() : null
 const CHANNEL_NAME = 'off-topic'
 
 let failed = 0
@@ -26,7 +31,7 @@ const check = (name, ok, detail = '') => {
 async function call(path, init = {}) {
   const response = await fetch(`${API}${path}`, {
     ...init,
-    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
+    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json', ...(LICENSE ? { 'X-Holt-License': LICENSE } : {}), ...(init.headers || {}) },
   })
   let body = null
   try { body = await response.json() } catch { /* not JSON */ }

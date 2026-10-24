@@ -121,6 +121,11 @@ and keeps abulxt's chat working; steps marked ⚠ change production data or traf
    and reads both. Account event channels, rate limits and AI chat thread ownership keep `user:<n>`
    (they are not chat identity). Backup: amph `/root/db-backups/abulxt-before-036-20261024082628.dump`.
    Next: step 4 (holt serves the chat API).
+   **Steps 4-5 done 2026-10-24.** holt-chat (vite.chat.config.ts) runs the bridge API; abulxt's
+   OpenResty routes `/api/discord/bridge/*` to it through holt's licensed proxy (verified with the
+   holt-test account: signed-in send/edit/react/delete, live delivery to a guest browser). holt now owns
+   the bridge API and its helpers (deleted from abulxt); the realtime socket stays on abulxt. Next:
+   federation (ext identities in the bridge API, holt-owned now) and nocturne.
 1. *Identity seam in abulxt.* A `ChatIdentity` (`key`, `name`, `emailVerified`, `siteAdmin`, `tierFloor`,
    `discordId?`, `createdAt`, `avatarUrl`) built from `DbUser` in one adapter; every chat route,
    `writeDenialCore`, `chatPermsForUser`, onboarding, presence and `rt-api` take it instead of `DbUser`.

@@ -94,7 +94,8 @@ function requestPublic(channelId: string, key: string) {
   if (flushTimer === null) flushTimer = setTimeout(flush, 15)
 }
 
-const WEB_KEY = /^user:\d+$/
+// A site account's chat key: `abulxt:<n>` since migration 037, `user:<n>` before.
+const WEB_KEY = /^(?:abulxt|user):\d+$/
 
 /** Public presence of a web identity ('user:<siteId>'), or null until known. */
 export function usePublicPresence(channelId: string | null | undefined, authorKey: string | null | undefined): PublicPresenceStatus | null {

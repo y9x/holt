@@ -27,6 +27,7 @@ import {
   type OnboardingConfig,
   type OnboardingStateRow,
 } from './discord-onboarding.js'
+import { siteChatKey, siteChatKeys, siteIdOfChatKey } from './chat-identity-key.ts'
 
 // Discord-side channel visibility for the web chatbox, per bridged guild
 // (every function takes the guild the channel / perms belong to).
@@ -473,7 +474,7 @@ export async function discordChannelBits(
 // --- Server Onboarding (emulated) ---------------------------------------------
 
 export function onboardingIdentityKey(userId: number): string {
-  return `user:${userId}`
+  return siteChatKey(userId)
 }
 
 async function onboardingRolesFor(userId: number | null, guildId: string): Promise<string[]> {
@@ -500,11 +501,11 @@ export async function onboardingRoleHolders(guildId: string, roleId: string, lim
   if (!optionIds.length) return []
   const { rows } = await query<{ identity_key: string }>(
     `SELECT identity_key FROM discord_bridge_onboarding_state
-     WHERE guild_id = $1 AND identity_key LIKE 'user:%' AND responses && $2::text[]
+     WHERE guild_id = $1 AND (identity_key LIKE 'abulxt:%' OR identity_key LIKE 'user:%') AND responses && $2::text[]
      LIMIT $3`,
     [guildId, optionIds, limit],
   ).catch(() => ({ rows: [] as Array<{ identity_key: string }> }))
-  return rows.map((r) => Number(r.identity_key.slice('user:'.length))).filter((id) => Number.isSafeInteger(id) && id > 0)
+  return rows.map((r) => siteIdOfChatKey(r.identity_key)).filter((id): id is number => id !== null)
 }
 
 export interface OnboardingView {
@@ -1018,7 +1019,7 @@ export function invalidateVisibilityForEvent(seq: number, payload: Record<string
     return
   }
   const keys = Array.isArray(payload.keys) ? payload.keys.filter((k): k is string => typeof k === 'string') : []
-  if (typeof payload.userId === 'number') keys.push(`user:${payload.userId}`)
+  if (typeof payload.userId === 'number') keys.push(...siteChatKeys(payload.userId), `user:${payload.userId}`)
   for (const key of keys) {
     visibilityCache.delete(key)
     if (key.startsWith('discord:')) forgetMemberRoles(key.slice('discord:'.length))
@@ -1058,7 +1059,7 @@ export function eventTargetsIdentity(
   const discordId = typeof payload.discordId === 'string' ? payload.discordId : null
   if (discordId && discordId === identity.discordId) return true
   const userId = typeof payload.userId === 'number' ? payload.userId : null
-  return userId !== null && identity.keys.includes(`user:${userId}`)
+  return userId !== null && siteChatKeys(userId).some((key) => identity.keys.includes(key))
 }
 
 // A perms.changed event with no target at all is global (chat-role

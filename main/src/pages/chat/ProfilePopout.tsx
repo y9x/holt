@@ -208,7 +208,7 @@ export function ProfilePopout({ profile, channelId, guildName, guildIcon, onClos
 
   // Web (webhook) identity record: a web author's 'user:<siteId>' key, or
   // 'self' for the account popout (works for unlinked accounts too).
-  const webhookKey = !isSelf && profile.direction === 'web' && /^user:\d+$/.test(profile.authorKey || '') ? profile.authorKey! : null
+  const webhookKey = !isSelf && profile.direction === 'web' && /^(?:abulxt|user):\d+$/.test(profile.authorKey || '') ? profile.authorKey! : null
   const webhookCacheKey = webhookKey && channelId ? `${channelId}:${webhookKey}` : null
   const freshWebhook = (k: string | null) => {
     const hit = k ? webhookProfileCache.get(k) : undefined

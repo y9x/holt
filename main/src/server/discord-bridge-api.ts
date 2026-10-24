@@ -58,6 +58,7 @@ import { authorStyleFor, authorStylesFor, roleColorsFor, webAuthorStyle, type Au
 import { guildTagProfile } from './discord-guild-tag.js'
 import { approvedAvatarUrlForUser } from './avatar-store.ts'
 import { handleOnboardingRequest, isOnboardingRoute } from './discord-onboarding-api.js'
+import { siteChatKey, siteChatKeys, siteIdOfChatKey } from './chat-identity-key.ts'
 import {
   channelAccess,
   configuredGuildId,
@@ -791,7 +792,7 @@ function webIdentityView(guildId: string, userId: number): Promise<WebIdentityVi
     const memberSince = created ? new Date(created).toISOString() : null
     return {
       userId,
-      key: `user:${userId}`,
+      key: siteChatKey(userId),
       username: effectiveChatName(target.user.username, target.user.chat_display_name),
       siteUsername: target.user.username,
       chatDisplayName: effectiveChatName(target.user.username, target.user.chat_display_name) === target.user.username
@@ -852,9 +853,9 @@ async function reactorViews(guildId: string, keys: string[]): Promise<ReactorVie
     ? await authorStylesFor(guildId, discordIds).catch(() => ({} as Record<string, AuthorStyle | null>))
     : {}
   const views = await Promise.all(unique.map(async (key): Promise<ReactorView> => {
-    const web = /^user:(\d{1,10})$/.exec(key)
-    if (web) {
-      const userId = Number(web[1])
+    const webId = siteIdOfChatKey(key)
+    if (webId !== null) {
+      const userId = webId
       const view = await webIdentityView(guildId, userId).catch(() => null)
       return {
         key,
@@ -959,7 +960,7 @@ function watchWebIdentityChanges(): void {
       ...(Array.isArray(payload.keys) ? payload.keys : []),
       ...(Array.isArray(payload.targetKeys) ? payload.targetKeys : []),
     ].filter((k): k is string => typeof k === 'string')
-    const siteIds = keys.map((k) => /^user:(\d+)$/.exec(k)?.[1]).filter(Boolean).map(Number)
+    const siteIds = keys.map((k) => siteIdOfChatKey(k)).filter((id): id is number => id !== null)
     if (typeof payload.userId === 'number') siteIds.push(payload.userId)
     if (!siteIds.length) forgetWebIdentity(null)
     else for (const id of siteIds) forgetWebIdentity(id)
@@ -1236,7 +1237,9 @@ export function discordBridgeApi(): Plugin {
           guildRoleIds,
           guildId: permsGuildId,
           locked,
-          ownerKey: identity.ownerKey,
+          // The caller's chat identity (the client calls it ownerKey): the chat key for a signed-in user,
+          // never the account's event key. Guests keep their guest key.
+          ownerKey: identity.user ? siteChatKey(identity.user.id) : identity.ownerKey,
           webhookKeys: webhookKeys(subject),
           canView: hasPerm(perms.permissions, Perm.VIEW_MESSAGES) && overwrites.view && discordView,
           canSend: canSendFlag,
@@ -1259,7 +1262,7 @@ export function discordBridgeApi(): Plugin {
             bridged: Boolean(channel?.enabled),
             staff: canModerateHere && (hasPerm(perms.permissions, Perm.MANAGE_WEBHOOKS) || hasPerm(perms.permissions, Perm.BAN_WEBHOOKS)),
             botManageMessages: channelId && channel?.enabled ? await botCanManageMessages(channelId, channel.guildId) : false,
-            selfKeys: [identity.ownerKey, ...(discordId ? [`discord:${discordId}`] : [])],
+            selfKeys: [...(identity.user ? siteChatKeys(identity.user.id) : [identity.ownerKey]), ...(discordId ? [`discord:${discordId}`] : [])],
           },
           banned,
           timeout,
@@ -1551,9 +1554,9 @@ export function discordBridgeApi(): Plugin {
         const ids = requested.filter((id) => /^\d{15,22}$/.test(id)).slice(0, 100)
         // Web (webhook) authors by key ('user:<siteId>'): their effective
         // roles' color (incl. gradients); no member cosmetics.
-        const webIds = [...new Set(requested.map((id) => /^user:(\d{1,10})$/.exec(id)?.[1]).filter(Boolean).map(Number))].slice(0, 50)
+        const webKeys = [...new Set(requested.filter((key) => siteIdOfChatKey(key) !== null))].slice(0, 50)
         if (!channelId) return sendJson(response, 400, { error: 'Missing channel.' })
-        if (!ids.length && !webIds.length) return sendJson(response, 200, { authors: {} })
+        if (!ids.length && !webKeys.length) return sendJson(response, 200, { authors: {} })
         const authorsGate = await viewGate(identity.user, channelId)
         if (!authorsGate.ok) return sendJson(response, authorsGate.status, authorsGate.body)
         const authorsLimit = rateLimit(`bridge:authors:${identity.ownerKey}`, {
@@ -1565,8 +1568,8 @@ export function discordBridgeApi(): Plugin {
           return sendRateLimited(response, authorsLimit.retryAfterSec, authorsLimit.error)
         }
         const authors: Record<string, AuthorStyle | null> = ids.length ? await authorStylesFor(authorsGate.guildId, ids).catch(() => ({})) : {}
-        const webViews = await Promise.all(webIds.map((id) => webIdentityView(authorsGate.guildId, id).catch(() => null)))
-        webIds.forEach((id, i) => { authors[`user:${id}`] = webViews[i]?.style ?? null })
+        const webViews = await Promise.all(webKeys.map((key) => webIdentityView(authorsGate.guildId, siteIdOfChatKey(key)!).catch(() => null)))
+        webKeys.forEach((key, i) => { authors[key] = webViews[i]?.style ?? null })
         return sendJson(response, 200, { authors })
       }
 
@@ -1756,13 +1759,13 @@ export function discordBridgeApi(): Plugin {
       if (path === 'presence') {
         if (req.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed' })
         const channelId = url.searchParams.get('channel') || ''
-        const siteIds = [...new Set((url.searchParams.get('keys') || '').split(',')
-          .map((k) => /^user:(\d{1,10})$/.exec(k)?.[1]).filter(Boolean).map(Number))].slice(0, 100)
+        const presenceKeys = [...new Set((url.searchParams.get('keys') || '').split(',')
+          .filter((key) => siteIdOfChatKey(key) !== null))].slice(0, 100)
         if (!channelId) return sendJson(response, 400, { error: 'Missing channel.' })
         const presenceGate = await viewGate(identity.user, channelId)
         if (!presenceGate.ok) return sendJson(response, presenceGate.status, presenceGate.body)
         const presence: Record<string, PublicPresence> = {}
-        for (const id of siteIds) presence[`user:${id}`] = presencePublicFor(id)
+        for (const key of presenceKeys) presence[key] = presencePublicFor(siteIdOfChatKey(key)!)
         return sendJson(response, 200, { presence })
       }
 
@@ -1884,7 +1887,7 @@ export function discordBridgeApi(): Plugin {
         const { message, existed } = await bridge.recordMessage({
           channelId: channel.channelId,
           direction: 'web',
-          authorKey: identity.ownerKey,
+          authorKey: siteChatKey(user.id),
           authorName,
           authorAvatar,
           // Name color = the highest colored EFFECTIVE role (perk/tier +
@@ -1978,7 +1981,7 @@ export function discordBridgeApi(): Plugin {
         const { message, existed } = await bridge.recordMessage({
           channelId: channel.channelId,
           direction: 'web',
-          authorKey: identity.ownerKey,
+          authorKey: siteChatKey(user.id),
           authorName: effectiveChatName(user.username, user.chat_display_name),
           authorAvatar: (await approvedAvatarUrlForUser(user.id)) ?? (user.discord_avatar
             ? `https://cdn.discordapp.com/avatars/${user.discord_id}/${user.discord_avatar}.webp?size=64`
@@ -2027,7 +2030,7 @@ export function discordBridgeApi(): Plugin {
         if (!target || target.deletedAt) {
           return sendJson(response, 404, { error: 'Unknown message.', code: DiscordError.UNKNOWN_MESSAGE })
         }
-        if (target.direction !== 'web' || target.authorKey !== identity.ownerKey) {
+        if (target.direction !== 'web' || siteIdOfChatKey(target.authorKey) !== identity.user.id) {
           return sendJson(response, 403, { error: 'You can only edit your own messages.', code: DiscordError.MISSING_PERMISSIONS })
         }
         // Discord forwards are immutable - there is no edit for a forward.
@@ -2087,7 +2090,7 @@ export function discordBridgeApi(): Plugin {
         for (const m of target.mentions as BridgeMention[]) {
           if (m && m.type === 'reply') mentions.push(m)
         }
-        const updated = await bridge.editMessage(messageId, identity.ownerKey, content, mentions)
+        const updated = await bridge.editMessage(messageId, siteChatKey(identity.user.id), content, mentions)
         if (!updated) {
           return sendJson(response, 404, { error: 'Unknown message.', code: DiscordError.UNKNOWN_MESSAGE })
         }
@@ -2138,7 +2141,7 @@ export function discordBridgeApi(): Plugin {
         const reactGate = await writeDenial(identity.user, identity.ip, reactChannel, 'react')
         if (!reactGate.ok) return sendJson(response, reactGate.status, reactGate.body)
 
-        const reactorKey = identity.ownerKey
+        const reactorKey = siteChatKey(identity.user.id)
         const before = await bridge.reactionAggregate(messageId, emoji)
         const alreadyReacted = message.reactions.some((r) => r.emoji === emoji && r.reactorKeys.includes(reactorKey))
         const aggregate = alreadyReacted
@@ -2202,7 +2205,7 @@ export function discordBridgeApi(): Plugin {
         // or anyone's with Manage Messages ('manage-messages': + timeout +
         // MANAGE/BAN bit). A message you can't see is Unknown Message.
         const linked = identity.user.discord_id || null
-        const isAuthor = (target.direction === 'web' && target.authorKey === identity.ownerKey)
+        const isAuthor = (target.direction === 'web' && siteIdOfChatKey(target.authorKey) === identity.user.id)
           || (target.direction === 'discord' && linked !== null && target.authorKey === `discord:${linked}`)
         const suppressGate = await writeDenial(identity.user, identity.ip, suppressChannel, isAuthor ? 'own-message' : 'manage-messages')
         if (!suppressGate.ok) {
@@ -2248,7 +2251,7 @@ export function discordBridgeApi(): Plugin {
         // MANAGE_WEBHOOKS/BAN_WEBHOOKS, not timed out, not banned). Both need
         // VIEW on the channel; without it the message is Unknown (staff can't
         // walk sequential ids into channels hidden from them).
-        const isOwnWebMessage = message.direction === 'web' && message.authorKey === identity.ownerKey
+        const isOwnWebMessage = message.direction === 'web' && identity.user !== null && siteIdOfChatKey(message.authorKey) === identity.user.id
         const deleteChannel = await bridge.channelFor(message.channelId)
         const deleteGate = await writeDenial(identity.user, identity.ip, deleteChannel, isOwnWebMessage ? 'own-message' : 'manage-messages')
         if (!deleteGate.ok) {
@@ -2392,7 +2395,7 @@ export function discordBridgeApi(): Plugin {
         } else return sendJson(response, 400, { error: 'Unknown moderation action.' })
 
         const result = await moderateWebhook(
-          { perms: actorPerms, subject: actorGate.subject, name: actorName, id: identity.ownerKey },
+          { perms: actorPerms, subject: actorGate.subject, name: actorName, id: identity.user ? siteChatKey(identity.user.id) : identity.ownerKey },
           target,
           channel.channelId,
           request,
@@ -2422,7 +2425,7 @@ export function discordBridgeApi(): Plugin {
         if (!channel) return sendJson(response, 404, { error: 'Unknown channel.' })
         await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.typing', {
           channelId: channel.channelId,
-          authorKey: identity.ownerKey,
+          authorKey: siteChatKey(identity.user.id),
           authorName: effectiveChatName(identity.user.username, identity.user.chat_display_name),
         })
         return sendJson(response, 200, { ok: true })

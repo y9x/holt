@@ -101,7 +101,7 @@ export function discordAuthorId(message: Pick<BridgeMessage, 'authorKey' | 'dire
  *  Discord-side authors, the 'user:<siteId>' webhook key for web authors
  *  (their effective roles' name color / gradient), else null. */
 export function authorStyleKey(message: Pick<BridgeMessage, 'authorKey' | 'direction'>): string | null {
-  if (message.direction === 'web') return /^user:\d+$/.test(message.authorKey || '') ? message.authorKey : null
+  if (message.direction === 'web') return /^(?:abulxt|user):\d+$/.test(message.authorKey || '') ? message.authorKey : null
   return discordAuthorId(message)
 }
 

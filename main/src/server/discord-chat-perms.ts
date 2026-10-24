@@ -1,6 +1,7 @@
 import { getConfig } from './config.js'
 import { query } from './db.js'
 import { cachedGuildMemberRoles } from './discord-roles.js'
+import { siteChatKey, siteIdOfChatKey } from './chat-identity-key.ts'
 
 // Chat permissions as Discord-style permission bitfields over guild roles -
 // NOT site admin. "Webhooks" are the webhook delivery identities (web users and
@@ -480,20 +481,14 @@ export function extKeyOf(raw: string): string | null {
 export function parseWebhookTarget(raw: unknown): WebhookTarget | null {
   if (typeof raw !== 'string') return null
   const value = raw.trim()
-  const site = /^user:(\d{1,10})$/.exec(value)
-  if (site) {
-    const userId = Number(site[1])
-    return Number.isSafeInteger(userId) && userId > 0 ? { kind: 'site', userId } : null
+  // `abulxt:<n>` (since migration 037) or the legacy `user:<n>`: the site account n.
+  if (/^(?:abulxt|user):/.test(value)) {
+    const userId = siteIdOfChatKey(value)
+    return userId === null ? null : { kind: 'site', userId }
   }
   const discord = /^discord:(\d{15,22})$/.exec(value)
   if (discord) return { kind: 'discord', discordId: discord[1] }
   if (SNOWFLAKE_RE.test(value)) return { kind: 'discord', discordId: value }
-  // holt names this site's accounts `abulxt:<n>`: the same identity as `user:<n>`.
-  const own = /^abulxt:(\d{1,10})$/.exec(value)
-  if (own) {
-    const userId = Number(own[1])
-    return Number.isSafeInteger(userId) && userId > 0 ? { kind: 'site', userId } : null
-  }
   const ext = extKeyOf(value)
   return ext ? { kind: 'ext', key: ext } : null
 }
@@ -506,7 +501,7 @@ export function subjectOfUser(user: { id?: number | null; discord_id?: string | 
 // Every author/reactor key this webhook appears under.
 export function webhookKeys(subject: WebhookSubject): string[] {
   const keys: string[] = []
-  if (subject.userId !== null) keys.push(`user:${subject.userId}`)
+  if (subject.userId !== null) keys.push(siteChatKey(subject.userId))
   if (subject.discordId) keys.push(`discord:${subject.discordId}`)
   if (subject.extKey) keys.push(subject.extKey)
   return keys
@@ -623,7 +618,7 @@ export async function activeTimeout(channelId: string, subject: WebhookSubject):
   return {
     id: Number(row.id),
     channelId: row.channel_id,
-    subject: row.subject_type === 'site' ? `user:${row.subject}` : row.subject_type === 'ext' ? row.subject : `discord:${row.subject}`,
+    subject: row.subject_type === 'site' ? siteChatKey(Number(row.subject)) : row.subject_type === 'ext' ? row.subject : `discord:${row.subject}`,
     reason: row.reason,
     issuedByName: row.issued_by_name,
     timeoutUntil: row.timeout_until.toISOString(),

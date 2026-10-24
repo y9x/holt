@@ -2,6 +2,7 @@ import { query, getPool } from './db.js'
 import { sameOriginAvatarUrl } from './avatar-store.js'
 import { emit, DISCORD_BRIDGE_OWNER_KEY } from './events.js'
 import type { BridgeInteraction } from './discord-interactions.js'
+import { siteChatKeys } from './chat-identity-key.ts'
 
 export interface BridgeChannel {
   id: number
@@ -1274,7 +1275,7 @@ export function expandSearchIdentities(
     if (siteIds.has(l.siteId)) discordIds.add(l.discordId)
   }
   return {
-    authorKeys: [...[...discordIds].map((id) => `discord:${id}`), ...[...siteIds].map((id) => `user:${id}`)],
+    authorKeys: [...[...discordIds].map((id) => `discord:${id}`), ...[...siteIds].flatMap((id) => siteChatKeys(Number(id)))],
     discordIds: [...discordIds],
   }
 }

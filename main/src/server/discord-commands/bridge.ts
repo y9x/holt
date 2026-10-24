@@ -117,7 +117,7 @@ async function moderateAs(
     guildId,
   )
   if (!result.ok) return result.error
-  const who = `**${target.name}** (${[target.userId !== null ? `user:${target.userId}` : '', target.discordId ? `discord:${target.discordId}` : ''].filter(Boolean).join(' / ')})`
+  const who = `**${target.name}** (${[target.userId !== null ? `abulxt:${target.userId}` : '', target.discordId ? `discord:${target.discordId}` : ''].filter(Boolean).join(' / ')})`
   switch (request.action) {
     case 'timeout': return `Timed out ${who} in <#${channelId}> until <t:${Math.floor(new Date(String(result.body.timeoutUntil)).getTime() / 1000)}:R>.`
     case 'untimeout': return `Removed the timeout for ${who} in <#${channelId}>.`

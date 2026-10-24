@@ -12,6 +12,7 @@
 //     invisibility: an invisible user is `offline` to everyone else.
 import { query } from './db.js'
 import { broadcastEphemeral, DISCORD_BRIDGE_OWNER_KEY } from './events.js'
+import { siteChatKeys } from './chat-identity-key.ts'
 
 export const PRESENCE_CHOICES = ['online', 'idle', 'dnd', 'invisible'] as const
 export type PresenceChoice = (typeof PRESENCE_CHOICES)[number]
@@ -114,7 +115,8 @@ function publish(userId: number): void {
   const signature = `${view.shown}|${view.public}|${choice ?? ''}`
   if (published.get(userId) === signature) return
   published.set(userId, signature)
-  const keys = [`user:${userId}`]
+  // Both chat keys, so a page loaded before migration 037 still matches its authors.
+  const keys = siteChatKeys(userId)
   broadcastEphemeral(DISCORD_BRIDGE_OWNER_KEY, 'bridge.presence', { keys, status: view.public })
   broadcastEphemeral(DISCORD_BRIDGE_OWNER_KEY, 'bridge.presence.self', { keys, shown: view.shown, choice })
 }
@@ -167,7 +169,7 @@ export function presenceDetach(userId: number, socket: object): void {
 export function presenceSelfPayload(userId: number): Record<string, unknown> | null {
   const view = viewFor(userId)
   if (!view) return null
-  return { keys: [`user:${userId}`], shown: view.shown, choice: choices.get(userId) ?? null }
+  return { keys: siteChatKeys(userId), shown: view.shown, choice: choices.get(userId) ?? null }
 }
 
 /** Public status for another account (HTTP lookups). Unknown -> offline. */

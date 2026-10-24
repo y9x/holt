@@ -991,3 +991,31 @@ ALTER TABLE discord_bridge_timeout ADD CONSTRAINT discord_bridge_timeout_subject
 ALTER TABLE discord_bridge_webhook_perm DROP CONSTRAINT IF EXISTS discord_bridge_webhook_perm_subject_type_check;
 ALTER TABLE discord_bridge_webhook_perm ADD CONSTRAINT discord_bridge_webhook_perm_subject_type_check
     CHECK (subject_type IN ('user', 'role', 'site', 'ext'));
+
+-- migration: 037_chat_site_keys_abulxt
+-- holt phase 1 step 3 (part 2): a site account's chat identity key becomes `abulxt:<id>` (the key holt uses
+-- for this site's accounts) instead of `user:<id>`. Only chat identity: message authors, reactors and
+-- onboarding state. Account event channels and AI chat thread ownership keep `user:<id>`.
+-- One-way. Backup taken first (amph /root/db-backups/abulxt-before-036-20261024082628.dump; 036 changed no
+-- rows). The code reads both forms and writes only the new one (server/chat-identity-key.ts).
+-- Runs as one statement batch, so as one transaction. A duplicate cannot exist (nothing wrote `abulxt:`
+-- before this), but one is dropped first so the unique keys can never stop the rewrite halfway.
+DELETE FROM discord_bridge_reaction r
+ USING discord_bridge_reaction o
+ WHERE r.reactor_key ~ '^user:[0-9]+$'
+   AND o.reactor_key = 'abulxt:' || substring(r.reactor_key FROM 6)
+   AND o.message_id = r.message_id AND o.emoji = r.emoji;
+UPDATE discord_bridge_reaction
+   SET reactor_key = 'abulxt:' || substring(reactor_key FROM 6)
+ WHERE reactor_key ~ '^user:[0-9]+$';
+DELETE FROM discord_bridge_onboarding_state s
+ USING discord_bridge_onboarding_state o
+ WHERE s.identity_key ~ '^user:[0-9]+$'
+   AND o.identity_key = 'abulxt:' || substring(s.identity_key FROM 6)
+   AND o.guild_id = s.guild_id;
+UPDATE discord_bridge_onboarding_state
+   SET identity_key = 'abulxt:' || substring(identity_key FROM 6)
+ WHERE identity_key ~ '^user:[0-9]+$';
+UPDATE discord_bridge_message
+   SET author_key = 'abulxt:' || substring(author_key FROM 6)
+ WHERE author_key ~ '^user:[0-9]+$';

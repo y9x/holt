@@ -583,6 +583,8 @@ export function publicClientConfig(config: AbulxtConfig) {
       ? (config.captcha?.sitekey || config.captcha?.sitekeys?.[0] || '')
       : '',
     captchaProvider: config.captcha?.enabled ? captchaProviderOf(config) : '',
+    // The chat view is holt's chatbox (an iframe of /chat/) unless client.holtChat is false.
+    holtChat: raw.holtChat !== false,
   }
 
   // Drop empties so the embedded JSON stays small.

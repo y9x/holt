@@ -32,6 +32,9 @@ export interface ClientConfig {
 
   mainWebsite?: string;
   isMainWebsite?: boolean;
+
+  /** The chat view is holt's chatbox (iframe of /chat/). false renders the built-in chatbox. */
+  holtChat?: boolean;
 }
 
 /** Prefer neutral relay* keys; fall back to legacy wisp* for old embeds. */

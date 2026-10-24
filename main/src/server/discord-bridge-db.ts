@@ -126,6 +126,8 @@ export interface BridgeMessage {
   channelId: string
   direction: 'discord' | 'web'
   discordMessageId: string | null
+  /** A forum post's first message: Discord gives it the thread's own id. */
+  starter?: boolean
   authorKey: string
   authorName: string
   authorAvatar: string | null
@@ -281,6 +283,7 @@ export function toMessage(row: MessageRow): BridgeMessage {
     channelId: row.channel_id,
     direction: row.direction,
     discordMessageId: row.discord_message_id,
+    ...(row.discord_message_id !== null && row.discord_message_id === row.channel_id ? { starter: true } : {}),
     authorKey: row.author_key,
     authorName: row.author_name,
     authorAvatar: sameOriginAvatarUrl(row.author_avatar),

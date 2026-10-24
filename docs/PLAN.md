@@ -69,6 +69,12 @@ page is a React app (`main/src/embed/`) built with `make build` (shield VM compi
 in a real browser by `make e2e` (framed cross-site; text reveals; account actions navigate the top
 page; a non-listed origin is refused by `frame-ancestors`).
 
+**abulxt integration (live 2026-10-24).** abulxt's `#/chat` is an iframe of `/chat/`, proxied on every
+abulxt host to holt's `/abulxt/` (proxy embedding with abulxt's localStorage login, `chat: true`). holt
+serves abulxt's chatbox, vendored byte-identical (`chatClient`, `chatAssets`), with holt-owned stand-ins
+for navigation, sign-in and ads. The chatbox still calls abulxt's chat API on abulxt's origin, so phases 1
+and 2 below are what make it work for a platform without that API (nocturne).
+
 **Phase 1 — server move.** Copy the chat server into `main/src/server/` and replace `DbUser` with
 `Principal` everywhere. The seams in abulxt today:
 

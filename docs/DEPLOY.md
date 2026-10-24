@@ -26,6 +26,17 @@ whichever starts last is the only one running. Until abulxt's deploy stops insta
 takes it again. `activate` disables `abulxt-discord` and, if `holt-discord` does not log in within
 60 s, starts `abulxt-discord` again and fails the deploy.
 
+## abulxt's mount
+
+- `/opt/holt/config.js`: the `abulxt` platform is proxy-only (`userState` at
+  `http://127.0.0.1:8820/api/auth/me`, `tokenStorageKey: "abulxt:auth-token"`), `chat: true`, path links
+  (`/#/account`), origin `https://abstracteducation.loan`.
+- `/etc/openresty/snippets/routes-common.conf` (abulxt repo: `deploy/openresty/snippets/routes-common.conf`):
+  `location ^~ /chat/` -> `http://127.0.0.1:8830/abulxt/`, plus a relative `/chat` redirect.
+- Proxy pages send `Cross-Origin-Embedder-Policy: credentialless`: abulxt's page is cross-origin isolated
+  and may only frame documents that send COEP.
+- Fallback: `client.holtChat: false` in abulxt's config.js renders abulxt's built-in chatbox.
+
 ## One-time host setup (done 2026-10-24; repeat only on a new host)
 
 1. `install -d /opt/holt`; write `/opt/holt/config.js` from `main/config.example.js` with the amph

@@ -1019,3 +1019,60 @@ UPDATE discord_bridge_onboarding_state
 UPDATE discord_bridge_message
    SET author_key = 'abulxt:' || substring(author_key FROM 6)
  WHERE author_key ~ '^user:[0-9]+$';
+
+-- migration: 038_discord_bridge_forums
+-- Discord forum (15) and media (16) channels in the chatbox (holt docs/forum/contract.md).
+--   discord_bridge_channel.type: the Discord channel type (0 text, 5 announcement, 15 forum, 16 media).
+--     Every existing row is a text or announcement channel; 0 renders the same for both.
+--   available_tags / default_reaction_emoji / default_sort_order (NULL = not set) / default_forum_layout
+--     (0 = not set) / flags (REQUIRE_TAG 16) / rate limits: the forum's own settings, written by the bot's
+--     bridge-set sync. available_tags holds Discord's tag objects ({id, name, moderated, emoji_id, emoji_name}).
+--   discord_bridge_post: one row per post (a Discord thread in a bridged forum). thread_id is NULL while a
+--     web-created post waits for its webhook delivery; its starter message is stored meanwhile with
+--     discord_bridge_message.channel_id = 'post:<id>' and re-keyed to the thread id in one transaction when
+--     the webhook returns. Messages in a post keep channel_id = the thread id. message_count and
+--     total_message_sent are Discord's hints only: reply counts come from holt's own rows.
+--     last_activity_at = the newest message (or creation) time, the "Recently Active" sort key.
+--     delivery_error: the Discord error code that stopped a web post's delivery (the row is also deleted).
+ALTER TABLE discord_bridge_channel ADD COLUMN IF NOT EXISTS type SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE discord_bridge_channel ADD COLUMN IF NOT EXISTS available_tags JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE discord_bridge_channel ADD COLUMN IF NOT EXISTS default_reaction_emoji JSONB;
+ALTER TABLE discord_bridge_channel ADD COLUMN IF NOT EXISTS default_sort_order SMALLINT;
+ALTER TABLE discord_bridge_channel ADD COLUMN IF NOT EXISTS default_forum_layout SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE discord_bridge_channel ADD COLUMN IF NOT EXISTS flags INT NOT NULL DEFAULT 0;
+ALTER TABLE discord_bridge_channel ADD COLUMN IF NOT EXISTS default_thread_rate_limit_per_user INT NOT NULL DEFAULT 0;
+ALTER TABLE discord_bridge_channel ADD COLUMN IF NOT EXISTS rate_limit_per_user INT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS discord_bridge_post (
+    id BIGSERIAL PRIMARY KEY,
+    thread_id TEXT UNIQUE,
+    channel_id TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    owner_key TEXT NOT NULL,
+    owner_name TEXT NOT NULL DEFAULT '',
+    owner_avatar TEXT,
+    owner_color TEXT,
+    applied_tags TEXT[] NOT NULL DEFAULT '{}',
+    flags INT NOT NULL DEFAULT 0,
+    archived BOOLEAN NOT NULL DEFAULT FALSE,
+    locked BOOLEAN NOT NULL DEFAULT FALSE,
+    auto_archive_duration INT,
+    archive_timestamp TIMESTAMPTZ,
+    rate_limit_per_user INT NOT NULL DEFAULT 0,
+    message_count INT NOT NULL DEFAULT 0,
+    total_message_sent INT NOT NULL DEFAULT 0,
+    last_message_id TEXT,
+    last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    starter_message_id BIGINT REFERENCES discord_bridge_message(id) ON DELETE SET NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('discord', 'web')),
+    client_id TEXT,
+    delivery_error INT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS discord_bridge_post_activity_idx
+    ON discord_bridge_post(channel_id, last_activity_at DESC, id DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS discord_bridge_post_created_idx
+    ON discord_bridge_post(channel_id, created_at DESC, id DESC) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS discord_bridge_post_client_idx
+    ON discord_bridge_post(owner_key, client_id) WHERE client_id IS NOT NULL;

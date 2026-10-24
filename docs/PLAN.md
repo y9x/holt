@@ -112,6 +112,9 @@ and keeps abulxt's chat working; steps marked ⚠ change production data or traf
    `chat_display_name` 8, `discord_name` 3, `admin` 3, `email_verified` 2. **Steps 1 and 2 are one
    change in practice: turn the numeric web id into a string key.** Do the ban/timeout/overwrite matching
    (`subject_type 'site'`) first and fail closed: an unrecognised key must never match "not banned".
+   **Steps 1-2 done 2026-10-24** (abulxt 219480c8): `WebhookTarget` `ext` kind + `WebhookSubject.extKey`;
+   bans, timeouts, untimeouts and member overwrites match it (fail closed); `abulxt:<n>` parses as the site
+   account. Writes of `ext` rows wait for step 3's CHECK widening and fail loudly until then.
 1. *Identity seam in abulxt.* A `ChatIdentity` (`key`, `name`, `emailVerified`, `siteAdmin`, `tierFloor`,
    `discordId?`, `createdAt`, `avatarUrl`) built from `DbUser` in one adapter; every chat route,
    `writeDenialCore`, `chatPermsForUser`, onboarding, presence and `rt-api` take it instead of `DbUser`.

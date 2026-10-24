@@ -39,9 +39,19 @@ export default {
   //   identityNamespace  Optional. Two platforms sharing one account system share a
   //                      namespace, so the same account is ONE identity in both. The
   //                      Abstract AI site and the abulxt main site share `abulxt`.
-  //   issuer             The `iss` claim of the platform's identity tokens.
+  //   userState          Proxy embedding (docs/EMBEDDING.md): the platform proxies `/chat/` to
+  //                      holt `/<id>/` and answers "who is signed in?" itself.
+  //     url              Its user-state endpoint, called server-side with the forwarded cookies.
+  //     cookies          Optional: forward only these cookie names (recommended).
+  //     fields           Optional: { id, name, emailVerified, avatar } field names in its JSON
+  //                      (defaults id, username, email_verified, avatar; dotted paths allowed).
+  //     tokenStorageKey  Optional, for logins kept in localStorage instead of a cookie (abulxt):
+  //                      the page reads this key on the platform's origin and holt forwards the
+  //                      token to `url` as `Authorization: Bearer`. Unset: cookies only.
+  //   issuer             Iframe embedding: the `iss` claim of the platform's identity tokens.
   //   secret             HS256 secret the platform signs identity tokens with. Per account
   //                      system; never shared with a platform in another namespace.
+  //                      A platform needs userState, or issuer + secret, or both.
   //   allowedOrigins     Page origins that may embed holt (CSP frame-ancestors) and call
   //                      /api/* from the embed handshake. Absolute https origins.
   //   links              Where the embed sends users for things holt does not own. Every
@@ -77,11 +87,11 @@ export default {
       },
     },
     {
+      // Proxy embedding only: no token secret.
       id: 'nocturne',
       name: 'Nocturne',
-      issuer: 'https://nocturne.lol',
-      secret: 'CHANGE_ME',
       allowedOrigins: ['https://nocturne.lol'],
+      userState: { url: 'https://nocturne.lol/chat/api/me', cookies: ['session'] },
       links: {
         account: 'https://nocturne.lol/',
         settings: 'https://nocturne.lol/',

@@ -1,16 +1,19 @@
-// The embed shell: runs the handshake (ready -> token -> /api/session), keeps the session fresh, and
-// shows who holt thinks you are with the platform's own account actions. The chat client mounts here
-// once it moves in (docs/PLAN.md, phase 2); this shell is what stays around it.
+// The embed shell: finds out who is signed in and shows it with the platform's own account actions. The
+// chat client mounts here once it moves in (docs/PLAN.md, phase 2); this shell is what stays around it.
 //
-// holt has no account UI. Every account action posts `navigate` with one of the platform's links,
-// and the platform page takes the user there.
+//   proxy   The page is the platform's own `/chat/`. holt asks the platform server-side (./_holt/me) and
+//           account actions navigate this page directly.
+//   iframe  The handshake (ready -> token -> /api/session) with the framing page, which also performs
+//           account actions (`navigate`).
+//
+// holt has no account UI. Every account action goes to one of the platform's links.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { HolyText } from '../components/common/HolyText'
 import { HolyDynamic, HolyRich } from '../components/common/HolyRich'
 import { HOLT_PROTOCOL, type LinkTarget } from './protocol'
 import { hostChannel } from './host'
-import { exchangeToken, type HoltSession, type PublicPrincipal } from './session'
+import { exchangeToken, fetchProxyPrincipal, type HoltSession, type PublicPrincipal } from './session'
 import type { EmbedPlatform } from './platform'
 
 /** Ask the platform for a fresh identity token this long before the holt session ends. */
@@ -29,15 +32,43 @@ interface Action {
 }
 
 export function App({ platform }: { platform: EmbedPlatform }) {
+  const proxied = platform.mode === 'proxy'
   const host = useMemo(() => hostChannel(platform.origins), [platform])
-  const [view, setView] = useState<View>(host.embedded ? { kind: 'connecting' } : { kind: 'standalone' })
+  const [view, setView] = useState<View>(proxied || host.embedded ? { kind: 'connecting' } : { kind: 'standalone' })
   const [reconnecting, setReconnecting] = useState(false)
   // The session token, for the chat API once it moves in. Memory only.
   const session = useRef<HoltSession | null>(null)
   const refreshTimer = useRef<number | undefined>(undefined)
 
+  // Proxy embedding: ask again whenever the tab comes back, since the user may have signed in or out on
+  // the platform in another tab.
   useEffect(() => {
-    if (!host.embedded) return
+    if (!proxied) return
+    let cancelled = false
+    const load = () => {
+      void fetchProxyPrincipal(platform.tokenStorageKey).then((result) => {
+        if (cancelled) return
+        if (!result.ok) {
+          console.warn(`holt: could not load who is signed in (${result.detail})`)
+          setView({ kind: 'error', reason: 'unreachable' })
+          return
+        }
+        setView(result.principal ? { kind: 'signed-in', principal: result.principal } : { kind: 'guest' })
+      })
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') load()
+    }
+    load()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [proxied])
+
+  useEffect(() => {
+    if (proxied || !host.embedded) return
     const scheduleRefresh = (expiresAt: number) => {
       window.clearTimeout(refreshTimer.current)
       const delay = Math.max(expiresAt - Date.now() - REFRESH_LEAD_MS, 0)
@@ -72,21 +103,24 @@ export function App({ platform }: { platform: EmbedPlatform }) {
       unlisten()
       window.clearTimeout(refreshTimer.current)
     }
-  }, [host, platform.id])
+  }, [host, platform.id, proxied])
 
   // Hosts that size the frame to its content get the height on every change.
   useEffect(() => {
-    if (!host.embedded || typeof ResizeObserver === 'undefined') return
+    if (proxied || !host.embedded || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
       host.send({ holt: HOLT_PROTOCOL, type: 'resize', height: document.documentElement.scrollHeight })
     })
     observer.observe(document.body)
     return () => observer.disconnect()
-  }, [host])
+  }, [host, proxied])
 
   const navigate = (target: LinkTarget) => {
     const url = platform.links[target]
-    if (url) host.send({ holt: HOLT_PROTOCOL, type: 'navigate', target, url })
+    if (!url) return
+    // Proxied, this page is the platform's own page; framed, the platform's page navigates itself.
+    if (proxied) window.location.assign(url)
+    else host.send({ holt: HOLT_PROTOCOL, type: 'navigate', target, url })
   }
 
   const actions: Action[] = []

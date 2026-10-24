@@ -30,7 +30,8 @@ const HASHED_CHUNK_FILE = 'assets/[hash].js'
 const HASHED_ASSET_FILE = 'assets/[hash][extname]'
 
 export default defineConfig({
-  base: '/',
+  // Relative: proxy embedding serves this page under whatever path the platform picks (/chat/ -> /<id>/).
+  base: './',
   worker: {
     rollupOptions: {
       output: {

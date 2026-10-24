@@ -91,6 +91,8 @@ const USER_COLUMNS = `id, username, email, email_verified, admin, created, strip
 
 export function publicUser(user: DbUser) {
   return {
+    // Stable account id. holt's proxy embedding keys chat identities by it (abulxt:<id>); usernames change.
+    id: user.id,
     username: user.username,
     email: user.email,
     emailVerified: user.email_verified,

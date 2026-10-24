@@ -35,6 +35,17 @@ Routes today: `GET /healthz`, `GET /holt-embed.js`, `GET /embed?platform=<id>`, 
 
 ## Embedding (for a partner)
 
+**The simple way: two proxy rules on your site.** Full guide in `docs/EMBEDDING.md`.
+
+```nginx
+location /chat/api/ { proxy_pass http://127.0.0.1:3000/api/; }   # your own user-state endpoint
+location /chat/     { proxy_pass https://holt.abstracteducation.loan/<platform-id>/; proxy_ssl_server_name on; }
+```
+
+holt asks your `/chat/api/me` who the visitor is, with the cookies the browser sent, server to server.
+
+**Iframe embedding, for sites that cannot proxy:**
+
 ```html
 <script src="https://HOLT_ORIGIN/holt-embed.js"></script>
 <script>

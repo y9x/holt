@@ -9,6 +9,15 @@ Decided 2026-10-24. Source of the current chatbox: `~/src/abulxt/main/src/pages/
 `~/src/abulxt/main/src/server/discord-*.ts` plus `events.ts`, `rt-api.ts`, `presence.ts`, avatars
 (server), about 39k lines.
 
+## Embedding (decided 2026-10-24: proxy first)
+
+The owner wants embedding "stupidly simple": a platform proxies `/chat/` on its own site to
+`holt.abstracteducation.loan/<platform id>/` and `/chat/api/` to its own user-state endpoint. holt is
+then same-origin with the platform (no iframe, no third-party cookies, no tokens or secrets), and
+resolves the visitor server-side by calling the platform's configured user-state URL with the
+forwarded cookies (`main/src/server/forward-auth.ts`, partner guide `docs/EMBEDDING.md`). The iframe +
+identity-token mode below stays for platforms that cannot proxy.
+
 ## Shape
 
 ```

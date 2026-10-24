@@ -13,20 +13,47 @@ export interface PlatformLinks {
   signIn: string | null
 }
 
+/**
+ * Proxy embedding: the platform serves holt under its own path (`/chat/` -> holt `/<id>/`) and answers
+ * "who is this?" at `url` from its own cookies. holt calls `url` server-side with the cookies the
+ * browser sent through the proxy, so the answer comes from the platform itself, never from the page.
+ */
+export interface UserStateConfig {
+  /** Absolute URL of the platform's user-state endpoint. Always this URL, never one from a request. */
+  url: string
+  /** Field names in the endpoint's JSON. Dotted paths reach into nested objects ("user.id"). */
+  fields: { id: string; name: string; emailVerified: string | null; avatar: string | null }
+  /** Cookie names forwarded to `url`. Null forwards every cookie the browser sent. */
+  cookies: readonly string[] | null
+  /**
+   * For platforms that keep their login in localStorage instead of a cookie (abulxt, Abstract AI): the key
+   * the page reads on the platform's own origin and sends as `Authorization: Bearer`, which holt forwards to
+   * `url` like a cookie. Null: cookies only, and holt never forwards an Authorization header.
+   */
+  tokenStorageKey: string | null
+}
+
 export interface Platform {
   id: string
   name: string
   identityNamespace: string
-  issuer: string
-  secret: string
+  /** Identity tokens (iframe embedding). Null when the platform only uses proxy embedding. */
+  issuer: string | null
+  secret: string | null
   allowedOrigins: readonly string[]
   links: PlatformLinks
+  userState: UserStateConfig | null
 }
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/
 const ORIGIN = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/i
+const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/
+const FIELD_PATH = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,3}$/
+const STORAGE_KEY = /^[A-Za-z0-9:._-]{1,128}$/
 /** `discord:` and `guest:` are holt's own; a platform may not claim them. */
 const RESERVED_NAMESPACES = new Set(['discord', 'guest', 'holt'])
+/** Top-level paths holt serves itself. A platform id is a path prefix in proxy embedding, so these are taken. */
+const RESERVED_IDS = new Set(['api', 'assets', 'embed', 'healthz', 'holt'])
 
 class PlatformConfigError extends Error {}
 
@@ -40,15 +67,60 @@ function text(value: unknown): string | null {
 
 function httpsUrl(id: string, field: string, value: unknown, optional: boolean): string | null {
   const raw = text(value)
-  if (raw === null) return optional ? null : fail(id, `links.${field} is required`)
+  if (raw === null) return optional ? null : fail(id, `${field} is required`)
   let url: URL
   try {
     url = new URL(raw)
   } catch {
-    return fail(id, `links.${field} is not a URL`)
+    return fail(id, `${field} is not a URL`)
   }
-  if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') fail(id, `links.${field} must be https`)
+  if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') fail(id, `${field} must be https`)
   return url.href
+}
+
+/**
+ * An account link: an absolute https URL, or, on a proxy-only platform, a path ("/#/account") on whatever
+ * origin the page is served from. A path keeps users on the domain they came in on (abulxt is served on
+ * many). Iframe pages cannot use one: the platform's page resolves it, and holt cannot know that page.
+ */
+function linkUrl(id: string, field: string, value: unknown, optional: boolean, allowPath: boolean): string | null {
+  const raw = text(value)
+  if (raw !== null && raw.startsWith('/')) {
+    if (!allowPath) fail(id, `${field}: a path link needs a proxy-only platform (userState, no issuer/secret)`)
+    if (raw.startsWith('//') || /[\s\\]/.test(raw)) fail(id, `${field} is not a path`)
+    return raw
+  }
+  return httpsUrl(id, field, value, optional)
+}
+
+function parseUserState(id: string, value: unknown): UserStateConfig | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object') fail(id, 'userState must be an object')
+  const raw = value as Record<string, unknown>
+  const url = httpsUrl(id, 'userState.url', raw.url, false)!
+  const fields = (typeof raw.fields === 'object' && raw.fields !== null ? raw.fields : {}) as Record<string, unknown>
+  const field = (key: string, fallback: string | null): string | null => {
+    if (fields[key] === null) return null
+    const path = text(fields[key]) ?? fallback
+    if (path !== null && !FIELD_PATH.test(path)) fail(id, `userState.fields.${key} is not a field name`)
+    return path
+  }
+  let cookies: string[] | null = null
+  if (raw.cookies !== undefined && raw.cookies !== null) {
+    if (!Array.isArray(raw.cookies) || raw.cookies.length === 0) fail(id, 'userState.cookies must be a non-empty list of cookie names')
+    cookies = raw.cookies.map((name) => {
+      if (typeof name !== 'string' || !COOKIE_NAME.test(name)) fail(id, `userState.cookies entry ${String(name)} is not a cookie name`)
+      return name
+    })
+  }
+  const tokenStorageKey = text(raw.tokenStorageKey)
+  if (tokenStorageKey !== null && !STORAGE_KEY.test(tokenStorageKey)) fail(id, 'userState.tokenStorageKey is not a storage key')
+  return {
+    url,
+    fields: { id: field('id', 'id')!, name: field('name', 'username')!, emailVerified: field('emailVerified', 'email_verified'), avatar: field('avatar', 'avatar') },
+    cookies,
+    tokenStorageKey,
+  }
 }
 
 function parsePlatform(entry: unknown, index: number): Platform {
@@ -56,13 +128,18 @@ function parsePlatform(entry: unknown, index: number): Platform {
   const raw = entry as Record<string, unknown>
   const id = text(raw.id) ?? fail(`#${index}`, 'id is required')
   if (!SLUG.test(id)) fail(id, 'id must be a lowercase slug')
+  if (RESERVED_IDS.has(id)) fail(id, `id ${id} is reserved (holt serves that path itself)`)
   const name = text(raw.name) ?? fail(id, 'name is required')
   const identityNamespace = text(raw.identityNamespace) ?? id
   if (!SLUG.test(identityNamespace)) fail(id, 'identityNamespace must be a lowercase slug')
   if (RESERVED_NAMESPACES.has(identityNamespace)) fail(id, `identityNamespace ${identityNamespace} is reserved`)
-  const issuer = text(raw.issuer) ?? fail(id, 'issuer is required')
-  const secret = text(raw.secret) ?? fail(id, 'secret is required')
-  if (secret === 'CHANGE_ME' || secret.length < 32) fail(id, 'secret must be at least 32 characters')
+  const userState = parseUserState(id, raw.userState)
+  // Identity tokens are optional once the platform answers user state itself; one of the two is required.
+  const issuer = text(raw.issuer)
+  const secret = text(raw.secret)
+  if ((issuer === null) !== (secret === null)) fail(id, 'issuer and secret go together')
+  if (issuer === null && userState === null) fail(id, 'needs userState (proxy embedding) or issuer + secret (identity tokens)')
+  if (secret !== null && (secret === 'CHANGE_ME' || secret.length < 32)) fail(id, 'secret must be at least 32 characters')
   const origins = Array.isArray(raw.allowedOrigins) ? raw.allowedOrigins : []
   if (origins.length === 0) fail(id, 'allowedOrigins must list at least one origin')
   const allowedOrigins = origins.map((value) => {
@@ -72,6 +149,7 @@ function parsePlatform(entry: unknown, index: number): Platform {
     return origin.toLowerCase()
   })
   const links = (typeof raw.links === 'object' && raw.links !== null ? raw.links : {}) as Record<string, unknown>
+  const pathLinks = secret === null && userState !== null
   return {
     id,
     name,
@@ -80,11 +158,12 @@ function parsePlatform(entry: unknown, index: number): Platform {
     secret,
     allowedOrigins,
     links: {
-      account: httpsUrl(id, 'account', links.account, false)!,
-      settings: httpsUrl(id, 'settings', links.settings, false)!,
-      verifyEmail: httpsUrl(id, 'verifyEmail', links.verifyEmail, true),
-      signIn: httpsUrl(id, 'signIn', links.signIn, true),
+      account: linkUrl(id, 'links.account', links.account, false, pathLinks)!,
+      settings: linkUrl(id, 'links.settings', links.settings, false, pathLinks)!,
+      verifyEmail: linkUrl(id, 'links.verifyEmail', links.verifyEmail, true, pathLinks),
+      signIn: linkUrl(id, 'links.signIn', links.signIn, true, pathLinks),
     },
+    userState,
   }
 }
 
@@ -97,6 +176,7 @@ export function parsePlatforms(raw: unknown): Platform[] {
   for (const platform of out) {
     if (ids.has(platform.id)) fail(platform.id, 'duplicate id')
     ids.add(platform.id)
+    if (platform.secret === null) continue
     const owner = secretOwner.get(platform.secret)
     if (owner !== undefined && owner !== platform.identityNamespace) fail(platform.id, `shares a secret with namespace ${owner}`)
     secretOwner.set(platform.secret, platform.identityNamespace)

@@ -55,3 +55,16 @@ test('localhost origins are allowed over http for development', () => {
   const [platform] = parsePlatforms([entry({ allowedOrigins: ['http://localhost:5173'] })])
   assert.deepEqual(platform.allowedOrigins, ['http://localhost:5173'])
 })
+
+test('path links ("/#/account") are for proxy-only platforms, and only real paths', () => {
+  const base = { id: 'abulxt', name: 'abulxt', allowedOrigins: ['https://abulxt.example'], userState: { url: 'http://127.0.0.1:8820/api/auth/me', tokenStorageKey: 'abulxt:auth-token' } }
+  const [platform] = parsePlatforms([{ ...base, links: { account: '/#/account', settings: '/#/settings', signIn: '/#/account' } }])
+  assert.equal(platform.links.account, '/#/account')
+  assert.equal(platform.links.verifyEmail, null)
+  const bad = (links, extra, re) => assert.throws(() => parsePlatforms([{ ...base, ...extra, links: { settings: '/#/s', ...links } }]), re)
+  bad({ account: '//evil.example/x' }, {}, /is not a path/)
+  bad({ account: '/a b' }, {}, /is not a path/)
+  bad({ account: '/\\evil.example' }, {}, /is not a path/)
+  // An iframe page cannot resolve a path on the platform's page.
+  bad({ account: '/#/account' }, { issuer: 'https://abulxt.example', secret: 's'.repeat(40) }, /needs a proxy-only platform/)
+})

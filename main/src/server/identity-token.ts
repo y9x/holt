@@ -54,6 +54,8 @@ function integer(value: unknown): number | null {
 }
 
 export function verifyIdentityToken(token: string, platform: Platform, nowMs = Date.now()): Principal {
+  // A proxy-embedding-only platform has no token secret, so no token can be valid for it.
+  if (platform.secret === null || platform.issuer === null) fail('this platform does not use identity tokens')
   let claims
   try {
     claims = verifyJwt(token, platform.secret)

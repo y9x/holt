@@ -6,6 +6,16 @@
 // identity exchange that turns a platform's token into a holt session. The chat itself (API,
 // realtime, Discord bridge) arrives in later phases (docs/PLAN.md) and mounts next to these routes.
 //
+// Proxy embedding (the simple way, docs/EMBEDDING.md): the platform proxies `/chat/` on its own site to
+// `/<platform id>/` here, so holt runs same-origin with the platform, and says who is signed in at its
+// own user-state URL, which holt calls with the forwarded cookies (forward-auth.ts).
+//
+//   GET  /<id>/                       The chat page, top-level on the platform's site.
+//   GET  /<id>/_holt/me               { principal | null, links }. Needs `X-Holt: 1`.
+//   GET  /<id>/assets/*               The compiled build (relative URLs, so any proxy path works).
+//
+// Iframe embedding (identity tokens, for sites that cannot proxy):
+//
 //   GET  /healthz                     ok
 //   GET  /holt-embed.js               The loader script platforms include (main/loader).
 //   GET  /embed?platform=<id>         The iframe page. CSP frame-ancestors = that platform's origins.
@@ -23,6 +33,11 @@ import { loadConfig, type HoltConfig } from './holt-config.ts'
 import { frameAncestors, platformById, platformForOrigin, type Platform } from './platforms.ts'
 import { IdentityTokenError, verifyIdentityToken, type Principal } from './identity-token.ts'
 import { issueSession, readSession, SESSION_TTL_SECONDS } from './session.ts'
+import { principalFromPlatform, UserStateUnavailable } from './forward-auth.ts'
+
+type EmbedMode = 'iframe' | 'proxy'
+/** `/<platform id>/<rest>`: proxy embedding. The id grammar matches platforms.ts SLUG. */
+const PROXY_PATH = /^\/([a-z][a-z0-9-]{0,31})(\/.*)?$/
 
 const MAX_BODY_BYTES = 16 * 1024
 const APP_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..')
@@ -74,14 +89,22 @@ function loadEmbedShell(): EmbedShell {
 }
 
 /** The platform data block for one embed page. `<` is escaped so the JSON can never close the tag. */
-function platformBlock(platform: Platform): string {
-  const data = JSON.stringify({ id: platform.id, name: platform.name, origins: platform.allowedOrigins, links: platform.links })
+function platformBlock(platform: Platform, mode: EmbedMode): string {
+  // tokenStorageKey is a key name, not a secret: the page reads the token itself on the platform's origin.
+  const tokenStorageKey = mode === 'proxy' ? platform.userState?.tokenStorageKey ?? null : null
+  const data = JSON.stringify({ id: platform.id, name: platform.name, mode, origins: platform.allowedOrigins, links: platform.links, tokenStorageKey })
   return `<script type="application/json" id="holt-platform">${data.replace(/</g, '\\u003c')}</script>`
 }
 
-function embedCsp(platform: Platform, shell: EmbedShell): string {
+function pageHtml(shell: EmbedShell, platform: Platform, mode: EmbedMode): string {
+  const block = platformBlock(platform, mode)
+  return shell.html.includes('</head>') ? shell.html.replace('</head>', `${block}\n</head>`) : block + shell.html
+}
+
+function embedCsp(platform: Platform, shell: EmbedShell, mode: EmbedMode): string {
   return [
-    frameAncestors(platform),
+    // Proxied, the page is the platform's own top-level page; framed, only the platform's origins may frame it.
+    mode === 'proxy' ? "frame-ancestors 'self'" : frameAncestors(platform),
     "default-src 'self'",
     `script-src 'self' ${shell.scriptHashes.join(' ')}`.trim(),
     // HolyText's ellipsis mode injects a <style> into its shadow root.
@@ -194,11 +217,11 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     if (method !== 'GET') return sendText(response, 405, 'text/plain; charset=utf-8', 'method not allowed')
     const platform = platformById(config.platforms, url.searchParams.get('platform') ?? '')
     if (!platform) return sendText(response, 404, 'text/plain; charset=utf-8', 'unknown platform')
+    if (platform.secret === null) return sendText(response, 404, 'text/plain; charset=utf-8', 'this platform embeds by proxy')
     // The browser enforces who may frame this page. X-Frame-Options is left out: CSP supersedes it.
-    response.setHeader('Content-Security-Policy', embedCsp(platform, shell))
+    response.setHeader('Content-Security-Policy', embedCsp(platform, shell, 'iframe'))
     response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
-    const html = shell.html.includes('</head>') ? shell.html.replace('</head>', `${platformBlock(platform)}\n</head>`) : platformBlock(platform) + shell.html
-    return sendText(response, 200, 'text/html; charset=utf-8', html)
+    return sendText(response, 200, 'text/html; charset=utf-8', pageHtml(shell, platform, 'iframe'))
   }
 
   if (url.pathname.startsWith('/api/')) {
@@ -248,6 +271,46 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     }
 
     return sendJson(response, 404, { error: 'not found' })
+  }
+
+  const proxied = PROXY_PATH.exec(url.pathname)
+  const proxyPlatform = proxied ? platformById(config.platforms, proxied[1]!) : null
+  if (proxied && proxyPlatform) {
+    if (!proxyPlatform.userState) return sendText(response, 404, 'text/plain; charset=utf-8', 'this platform embeds by iframe')
+    const rest = proxied[2] ?? ''
+    // `/<id>` without the slash: relative asset URLs would resolve one level too high. Absolute on holt's
+    // origin, so nginx's default proxy_redirect turns it back into the platform's own `/chat/`.
+    if (rest === '') {
+      response.statusCode = 308
+      response.setHeader('Location', `${config.publicOrigin}/${proxied[1]}/${url.search}`)
+      response.end()
+      return
+    }
+    if (rest === '/') {
+      if (method !== 'GET' && method !== 'HEAD') return sendText(response, 405, 'text/plain; charset=utf-8', 'method not allowed')
+      response.setHeader('Content-Security-Policy', embedCsp(proxyPlatform, shell, 'proxy'))
+      response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+      return sendText(response, 200, 'text/html; charset=utf-8', pageHtml(shell, proxyPlatform, 'proxy'))
+    }
+    if (rest === '/_holt/me') {
+      if (method !== 'GET') return sendJson(response, 405, { error: 'method not allowed' })
+      // A cross-site page cannot set this header without a CORS preflight, which holt never answers here.
+      if (request.headers['x-holt'] !== '1') return sendJson(response, 403, { error: 'missing X-Holt header' })
+      response.setHeader('Vary', 'Cookie, Authorization')
+      try {
+        const principal = await principalFromPlatform(proxyPlatform, { cookie: request.headers.cookie, authorization: request.headers.authorization })
+        return sendJson(response, 200, { principal: principal ? publicPrincipal(principal, config) : null, links: proxyPlatform.links })
+      } catch (error) {
+        if (!(error instanceof UserStateUnavailable)) throw error
+        console.warn(`[holt] ${proxyPlatform.id} user state unavailable: ${error.message}`)
+        return sendJson(response, 503, { error: 'Could not reach the site to check who you are.' })
+      }
+    }
+    if (method === 'GET' || method === 'HEAD') {
+      const found = await distFile(rest)
+      if (found) return sendText(response, 200, found.type, await readFile(found.file), rest.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache')
+    }
+    return sendText(response, 404, 'text/plain; charset=utf-8', 'not found')
   }
 
   if (method === 'GET' || method === 'HEAD') {

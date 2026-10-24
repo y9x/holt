@@ -293,6 +293,10 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     if (rest === '/') {
       if (method !== 'GET' && method !== 'HEAD') return sendText(response, 405, 'text/plain; charset=utf-8', 'method not allowed')
       response.setHeader('Content-Security-Policy', embedCsp(proxyPlatform, shell, 'proxy'))
+      // A platform page that is cross-origin isolated (abulxt sends COEP: credentialless for its in-browser
+      // workspace) may only frame documents that send COEP too; without it the browser refuses the frame.
+      // credentialless changes nothing for a page opened directly or framed by a site without COEP.
+      response.setHeader('Cross-Origin-Embedder-Policy', 'credentialless')
       response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
       return sendText(response, 200, 'text/html; charset=utf-8', pageHtml(shell, proxyPlatform, 'proxy'))
     }

@@ -320,6 +320,8 @@ try {
     check('proxy API: refused without the X-Holt header', noHeader.status === 403, JSON.stringify(noHeader))
     const forged = await me({ 'x-holt': '1', cookie: 'sid=forged' })
     check('proxy API: a cookie the partner does not know is a guest', forged.status === 200 && forged.body.principal === null, JSON.stringify(forged))
+    const coep = await fetch(`${holtOrigin}/proxied/`).then((r) => r.headers.get('cross-origin-embedder-policy'))
+    check('proxy page: sends COEP so a cross-origin-isolated platform page can frame it', coep === 'credentialless', String(coep))
     const iframeOnly = await fetch(`${holtOrigin}/partner/`).then((r) => r.status)
     check('proxy API: an iframe-only platform has no proxy page', iframeOnly === 404, String(iframeOnly))
   }

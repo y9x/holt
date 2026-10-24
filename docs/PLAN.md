@@ -142,6 +142,25 @@ and keeps abulxt's chat working; steps marked ⚠ change production data or traf
 6. *nocturne.* Its platform entry (`userState`, cookie names, links), a license, its Discord guild or
    category set.
 
+**Federation (requested 2026-10-24): every platform's users in the same channels, as equals.** holt owns
+the bridge API now, so this is holt work, verified at each stage with holt-test plus a test platform:
+
+- **F1 Identity hand-off.** holt-service authenticates the visitor (forward-auth) and passes the principal
+  to holt-chat in a header signed with a holt-only secret (`X-Holt-Principal`); holt-chat's identity layer
+  accepts it only with a valid signature and only from loopback. abulxt-namespace platforms keep using
+  their own login token unchanged.
+- **F2 Read paths.** perms/view gate/history/channels for an ext identity: guest-equivalent VIEW, member
+  floor and onboarding roles keyed by its ext key (`onboardingIdentityKey` -> string keys).
+- **F3 Write paths.** send/edit/delete/react/typing with `author_key = <ns>:<sub>`, name and avatar from
+  the principal, Discord webhook delivery under that name/avatar, email-verified gate from the platform's
+  claim, ext moderation (already supported, migration 036).
+- **F4 Federation UX.** profile popout shows the user's platform with a link to their profile there
+  (platform `profileUrl` template); mentions and presence work across platforms; a small platform badge
+  next to ext names so users can tell sites apart.
+- **F5 Client.** the chatbox on a non-abulxt platform calls `./_holt/api/discord/bridge` (api-base
+  stand-in) and takes "who am I" from holt (auth-api stand-in), with sign-in going to the platform.
+- **F6 nocturne.** its userState URL + cookie name, `chat: true`, its license (issued), go live.
+
 **Phase 2 — client move.** `pages/chat/*` moves into `main/src/` and mounts inside the embed shell
 (`main/src/embed/App.tsx`). It already builds through the same pipeline, so its 88 Holy wrappers
 carry over unchanged; its strings join `obfuscation-strings.ts`. Every account affordance (avatar click → profile, "Edit profile",

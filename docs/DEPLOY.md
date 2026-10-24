@@ -39,18 +39,27 @@ npm run license -- inspect "$(cat /root/nocturne.license)"
 
 Hand the license to the site out of band. To revoke one, add its `lid` to `licensing.revoked` and
 restart holt (`systemctl restart holt`); new page loads are refused at once, and an iframe session already
-issued ends within 12 hours. abulxt's own license lives in `/etc/openresty/holt-license.conf` (root, 600),
-included by its `/chat/` location.
+issued ends within 12 hours. Every issued license is kept in `/root/holt-licenses/<platform>.license`
+(root, 600).
 
-## abulxt's mount
+Issued 2026-10-24: `abulxt` (`YrQcgTjDv0QH_3_6`, no expiry), `abstract` (`nKJEVjNzF5K_4aDI`, no expiry),
+`nocturne` (`DAWyZavcxcV2athi`, until 2027-10-24, handed off privately).
 
+## abulxt's and Abstract's mounts
+
+- `/opt/holt/config.js`: `abstract` is configured like `abulxt` (namespace `abulxt`, same login token),
+  origin `https://chat.abstracteducation.loan`, with account links to the main site (the Abstract site has
+  no sign-in). Its host is held at the edges (`35-chat-hold.conf` answers 404) until the Abstract site
+  launches, so it is reachable only through amph's `:9080` for now.
 - `/opt/holt/config.js`: the `abulxt` platform is proxy-only (`userState` at
   `http://127.0.0.1:8820/api/auth/me`, `tokenStorageKey: "abulxt:auth-token"`), `chat: true`, path links
   (`/#/account`), origin `https://abstracteducation.loan`.
 - `/etc/openresty/snippets/routes-common.conf` (abulxt repo: `deploy/openresty/snippets/routes-common.conf`):
-  `location ^~ /chat/` -> `http://127.0.0.1:8830/abulxt/`, plus a relative `/chat` redirect. The location
-  includes `/etc/openresty/holt-license.conf` (`proxy_set_header X-Holt-License …`), so OpenResty refuses
-  to start without that file.
+  `location ^~ /chat/` -> holt `/$holt_platform/`, with `X-Holt-License: $holt_license`, plus a relative
+  `/chat` redirect. `conf.d/05-holt.conf` (in abulxt's repo) maps the host to the platform:
+  `chat.abstracteducation.loan` -> `abstract`, every other host -> `abulxt`. The root-only
+  `conf.d/06-holt-licenses.conf` maps the host to that platform's license; OpenResty refuses to start
+  without it.
 - Proxy pages send `Cross-Origin-Embedder-Policy: credentialless`: abulxt's page is cross-origin isolated
   and may only frame documents that send COEP.
 - Fallback: `client.holtChat: false` in abulxt's config.js renders abulxt's built-in chatbox.

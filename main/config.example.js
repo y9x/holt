@@ -85,15 +85,21 @@ export default {
       },
     },
     {
+      // Same account system as abulxt on another host: proxy embedding, shared namespace, links to the
+      // main site (that host has no sign-in of its own).
       id: 'abstract',
       name: 'Abstract AI',
       identityNamespace: 'abulxt',
-      issuer: 'https://chat.example.com',
-      secret: 'CHANGE_ME',
       allowedOrigins: ['https://chat.example.com'],
+      userState: {
+        url: 'http://127.0.0.1:8820/api/auth/me',
+        fields: { id: 'user.id', name: 'user.username', emailVerified: 'user.emailVerified', avatar: null },
+        tokenStorageKey: 'abulxt:auth-token',
+      },
+      chat: true,
       links: {
-        account: 'https://chat.example.com/#/account',
-        settings: 'https://chat.example.com/#/account',
+        account: 'https://abulxt.example.com/#/account',
+        settings: 'https://abulxt.example.com/#/settings',
       },
     },
     {

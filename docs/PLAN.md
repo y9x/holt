@@ -98,6 +98,25 @@ and 2 below are what make it work for a platform without that API (nocturne).
 - `events.ts` NOTIFY relay stays as is (bot process → app process). `rt-api.ts` authenticates
   sockets with the Bearer session passed as a subprotocol/first frame, not the `wcs` cookie.
 
+**Phase 1 execution order** (written 2026-10-24, after licensing shipped). Each step ships on its own
+and keeps abulxt's chat working; steps marked ⚠ change production data or traffic and need the owner's go.
+
+1. *Identity seam in abulxt.* A `ChatIdentity` (`key`, `name`, `emailVerified`, `siteAdmin`, `tierFloor`,
+   `discordId?`, `createdAt`, `avatarUrl`) built from `DbUser` in one adapter; every chat route,
+   `writeDenialCore`, `chatPermsForUser`, onboarding, presence and `rt-api` take it instead of `DbUser`.
+   Pure refactor in abulxt (owner of the code), typecheck + chat parity harness, then vendor-pull.
+2. *String keys.* Code accepts `<namespace>:<subject>` keys alongside `user:<n>` everywhere a key is parsed
+   (`parseWebhookTarget`, bans, timeouts, overwrites, reactions, onboarding). Reads both, writes old. Safe.
+3. ⚠ *Key migration.* `schema.sql` migration rewriting `user:<n>` → `abulxt:<n>` and `subject_type
+   'site'` → `'web'`; code then writes new keys. One-way: back up the database first.
+4. *holt serves the chat API* for chat platforms under `/<id>/_holt/api/…` (licensed like the rest), with
+   `ChatIdentity` from forward-auth principals. A holt stand-in for the client's `lib/api-base.ts` points
+   the chatbox there. Behind a per-platform flag; abulxt keeps its own API meanwhile.
+5. ⚠ *Cutover.* abulxt's platform flips to holt's chat API; abulxt's chat routes and chatbox copy are
+   deleted, and holt owns `pages/chat` outright (vendoring for them ends).
+6. *nocturne.* Its platform entry (`userState`, cookie names, links), a license, its Discord guild or
+   category set.
+
 **Phase 2 — client move.** `pages/chat/*` moves into `main/src/` and mounts inside the embed shell
 (`main/src/embed/App.tsx`). It already builds through the same pipeline, so its 88 Holy wrappers
 carry over unchanged; its strings join `obfuscation-strings.ts`. Every account affordance (avatar click → profile, "Edit profile",

@@ -101,6 +101,17 @@ and 2 below are what make it work for a platform without that API (nocturne).
 **Phase 1 execution order** (written 2026-10-24, after licensing shipped). Each step ships on its own
 and keeps abulxt's chat working; steps marked ⚠ change production data or traffic and need the owner's go.
 
+   **Seam map (measured 2026-10-24).** The chat code already takes narrow structural types, not
+   `DbUser` (only `discord-bridge-api.ts` names it, 7×): `{ id, discord_id, admin }`, `userId: number`,
+   `WebhookIdentity { userId, discordId }`, `ChannelViewer`. What ties it to abulxt is that a web identity
+   is a **number**: ~21 places build or parse `user:<n>` (bridge-api 7, channel-access 4, chat-perms 3,
+   presence 2, rt-api, identity, mention-limits, bridge-db, avatar-api), ~22 signatures take
+   `userId: number` (presence 9, roles 4, bridge-api 4, chat-perms 3, channel-access 2), and
+   `discord-chat-perms.ts` matches bans, timeouts and member overwrites on `subject_type 'site'` (15×).
+   Fields read off the user: `id` 35, `discord_id` 26, `username` 22, `discord_avatar` 8,
+   `chat_display_name` 8, `discord_name` 3, `admin` 3, `email_verified` 2. **Steps 1 and 2 are one
+   change in practice: turn the numeric web id into a string key.** Do the ban/timeout/overwrite matching
+   (`subject_type 'site'`) first and fail closed: an unrecognised key must never match "not banned".
 1. *Identity seam in abulxt.* A `ChatIdentity` (`key`, `name`, `emailVerified`, `siteAdmin`, `tierFloor`,
    `discordId?`, `createdAt`, `avatarUrl`) built from `DbUser` in one adapter; every chat route,
    `writeDenialCore`, `chatPermsForUser`, onboarding, presence and `rt-api` take it instead of `DbUser`.

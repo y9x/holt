@@ -1,6 +1,6 @@
 # Vendored from abulxt
 
-Vendored from abulxt commit `a8ed58dff528b634cc3e685ae2f173c23ba23f8d`
+Vendored from abulxt commit `78c5fd3ca0ea54d82f175e9e66d6131a1a26f156`
 
 holt reuses abulxt's client-protection pipeline unchanged: the shield VM (every chunk compiled to
 encrypted bytecode), the post-build string obfuscator, the canary guardrail, the dist reference

@@ -2149,14 +2149,15 @@ export async function forumPostViews(posts: BridgePost[]): Promise<ForumPostView
     s_content: string | null
     s_attachments: unknown
     s_embeds: unknown
+    s_author: string | null
     replies: string | null
     last_id: string | null
   }>(
     `SELECT p.id, s.id AS s_id, s.content AS s_content, s.attachments AS s_attachments, s.embeds AS s_embeds,
-            st.replies::text AS replies, st.last_id
+            s.author_name AS s_author, st.replies::text AS replies, st.last_id
        FROM discord_bridge_post p
        LEFT JOIN LATERAL (
-         SELECT m.id, m.content, m.attachments, m.embeds FROM discord_bridge_message m
+         SELECT m.id, m.content, m.attachments, m.embeds, m.author_name FROM discord_bridge_message m
           WHERE m.id = p.starter_message_id OR (p.thread_id IS NOT NULL AND m.discord_message_id = p.thread_id)
           ORDER BY m.id LIMIT 1
        ) s ON TRUE
@@ -2193,7 +2194,8 @@ export async function forumPostViews(posts: BridgePost[]): Promise<ForumPostView
       guildId: post.guildId,
       name: post.name,
       ownerKey: post.ownerKey,
-      ownerName: post.ownerName,
+      // An owner who left the guild has no directory entry; their starter message still carries the name.
+      ownerName: post.ownerName || r?.s_author || '',
       ownerAvatar: sameOriginAvatarUrl(post.ownerAvatar),
       ownerColor: post.ownerColor,
       appliedTags: post.appliedTags,

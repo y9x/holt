@@ -976,3 +976,18 @@ CREATE TABLE IF NOT EXISTS abstract_subscription (
     updated TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS abstract_subscription_sub_idx ON abstract_subscription (subscription_id);
+
+-- migration: 036_bridge_ext_subjects
+-- holt phase 1 step 3: bans, timeouts and per-channel member overwrites can name another platform's
+-- identity (subject_type 'ext', subject = '<namespace>:<subject>', for example 'nocturne:u_77').
+-- Additive: widens the three CHECKs, changes no rows. The code matched 'ext' already and failed at
+-- these CHECKs on write (abulxt 219480c8). Runs as one statement batch, so as one transaction.
+ALTER TABLE discord_bridge_ban DROP CONSTRAINT IF EXISTS discord_bridge_ban_subject_type_check;
+ALTER TABLE discord_bridge_ban ADD CONSTRAINT discord_bridge_ban_subject_type_check
+    CHECK (subject_type IN ('user', 'discord', 'ip', 'ext'));
+ALTER TABLE discord_bridge_timeout DROP CONSTRAINT IF EXISTS discord_bridge_timeout_subject_type_check;
+ALTER TABLE discord_bridge_timeout ADD CONSTRAINT discord_bridge_timeout_subject_type_check
+    CHECK (subject_type IN ('discord', 'site', 'ext'));
+ALTER TABLE discord_bridge_webhook_perm DROP CONSTRAINT IF EXISTS discord_bridge_webhook_perm_subject_type_check;
+ALTER TABLE discord_bridge_webhook_perm ADD CONSTRAINT discord_bridge_webhook_perm_subject_type_check
+    CHECK (subject_type IN ('user', 'role', 'site', 'ext'));

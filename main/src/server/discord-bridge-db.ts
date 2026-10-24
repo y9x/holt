@@ -773,7 +773,7 @@ export function banAppliesIn(rowGuildId: string | null, guildId: string | null |
   return rowGuildId === null || (Boolean(guildId) && rowGuildId === guildId)
 }
 
-export async function isBanned(subjectType: 'user' | 'discord' | 'ip', subject: string, guildId?: string | null): Promise<string | null> {
+export async function isBanned(subjectType: 'user' | 'discord' | 'ip' | 'ext', subject: string, guildId?: string | null): Promise<string | null> {
   const { rows } = await query<{ reason: string }>(
     `SELECT reason FROM discord_bridge_ban
      WHERE subject_type = $1 AND subject = $2 AND revoked_at IS NULL
@@ -788,7 +788,7 @@ export async function isBanned(subjectType: 'user' | 'discord' | 'ip', subject: 
 // `guildId` null = a global ban (every guild); a guild id scopes it to that
 // guild's bridged channels.
 export async function addBan(input: {
-  subjectType: 'user' | 'discord' | 'ip'
+  subjectType: 'user' | 'discord' | 'ip' | 'ext'
   subject: string
   reason?: string
   createdBy?: string
@@ -817,7 +817,7 @@ export async function addBan(input: {
 // `scope.global` = also the global (NULL) rows. A guild moderator lifts only
 // their guild's bans; site admins / home-guild staff lift global ones too.
 export async function revokeBan(
-  subjectType: 'user' | 'discord' | 'ip',
+  subjectType: 'user' | 'discord' | 'ip' | 'ext',
   subject: string,
   actor: string,
   // guildId = the guild the unban is issued in (its scoped rows + the log).

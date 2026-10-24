@@ -71,10 +71,13 @@ export function targetEventFields(target: WebhookIdentity): Record<string, unkno
 // ('user' = site user id) and its Discord side ('discord'). A linked account
 // is banned/unbanned on both, so the bot also removes its Discord-side posts
 // and the ban survives a later link/unlink. Pure (unit-tested).
-export function banSubjects(subject: WebhookSubject): Array<{ subjectType: 'user' | 'discord'; subject: string }> {
-  const rows: Array<{ subjectType: 'user' | 'discord'; subject: string }> = []
+export function banSubjects(subject: WebhookSubject): Array<{ subjectType: 'user' | 'discord' | 'ext'; subject: string }> {
+  const rows: Array<{ subjectType: 'user' | 'discord' | 'ext'; subject: string }> = []
   if (subject.userId !== null) rows.push({ subjectType: 'user', subject: String(subject.userId) })
   if (subject.discordId) rows.push({ subjectType: 'discord', subject: subject.discordId })
+  // Another platform's identity (holt): checked like the others, so an ext-only identity is never
+  // "not banned" by omission. Writing an 'ext' ban needs the CHECK widened (holt phase 1 step 3).
+  if (subject.extKey) rows.push({ subjectType: 'ext', subject: subject.extKey })
   return rows
 }
 

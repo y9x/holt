@@ -436,11 +436,15 @@ export function applySiteAdmin(perms: ChatPerms, admin: SiteAdminRole | null): C
 //   WebhookSubject  - both sides of a resolved identity (either may be null).
 //   WebhookIdentity - a resolved subject + display name + site perk fields.
 
-export type WebhookTarget = { kind: 'site'; userId: number } | { kind: 'discord'; discordId: string }
+// A webhook identity: a site account, a Discord user, or (holt proxy embedding) an identity from another
+// platform, keyed `<namespace>:<subject>` (for example `nocturne:u_77`). `abulxt:<n>` is the site account n.
+export type WebhookTarget = { kind: 'site'; userId: number } | { kind: 'discord'; discordId: string } | { kind: 'ext'; key: string }
 
 export interface WebhookSubject {
   userId: number | null
   discordId: string | null
+  /** Another platform's identity (`<namespace>:<subject>`), or null. Never a site or Discord key. */
+  extKey: string | null
 }
 
 export interface WebhookSiteUser {
@@ -458,6 +462,18 @@ export interface WebhookIdentity extends WebhookSubject {
 }
 
 const SNOWFLAKE_RE = /^\d{15,22}$/
+const EXT_KEY_RE = /^([a-z][a-z0-9-]{0,31}):([A-Za-z0-9._-]{1,128})$/
+/** Namespaces that are not another platform: this site's own keys, Discord, guests, holt itself. */
+const RESERVED_NAMESPACES = new Set(['user', 'discord', 'guest', 'holt'])
+/** This site's namespace in holt: `abulxt:<n>` is the site account n. */
+const SITE_NAMESPACE = 'abulxt'
+
+/** `<namespace>:<subject>` for another platform's identity, or null when `raw` is not one. Pure. */
+export function extKeyOf(raw: string): string | null {
+  const match = EXT_KEY_RE.exec(raw)
+  if (!match || RESERVED_NAMESPACES.has(match[1]) || match[1] === SITE_NAMESPACE) return null
+  return raw
+}
 
 // Parse a target as the client / slash commands name it: an author key
 // (`user:<siteId>` / `discord:<snowflake>`) or a bare Discord snowflake.
@@ -472,12 +488,19 @@ export function parseWebhookTarget(raw: unknown): WebhookTarget | null {
   const discord = /^discord:(\d{15,22})$/.exec(value)
   if (discord) return { kind: 'discord', discordId: discord[1] }
   if (SNOWFLAKE_RE.test(value)) return { kind: 'discord', discordId: value }
-  return null
+  // holt names this site's accounts `abulxt:<n>`: the same identity as `user:<n>`.
+  const own = /^abulxt:(\d{1,10})$/.exec(value)
+  if (own) {
+    const userId = Number(own[1])
+    return Number.isSafeInteger(userId) && userId > 0 ? { kind: 'site', userId } : null
+  }
+  const ext = extKeyOf(value)
+  return ext ? { kind: 'ext', key: ext } : null
 }
 
 // The caller's own webhook subject (a signed-in site user).
 export function subjectOfUser(user: { id?: number | null; discord_id?: string | null } | null | undefined): WebhookSubject {
-  return { userId: user?.id ?? null, discordId: user?.discord_id || null }
+  return { userId: user?.id ?? null, discordId: user?.discord_id || null, extKey: null }
 }
 
 // Every author/reactor key this webhook appears under.
@@ -485,6 +508,7 @@ export function webhookKeys(subject: WebhookSubject): string[] {
   const keys: string[] = []
   if (subject.userId !== null) keys.push(`user:${subject.userId}`)
   if (subject.discordId) keys.push(`discord:${subject.discordId}`)
+  if (subject.extKey) keys.push(subject.extKey)
   return keys
 }
 
@@ -496,7 +520,9 @@ export function webhookKey(subject: WebhookSubject): string {
 
 // Same webhook? (Linked accounts match on either side.)
 export function sameWebhook(a: WebhookSubject, b: WebhookSubject): boolean {
-  return (a.userId !== null && a.userId === b.userId) || (Boolean(a.discordId) && a.discordId === b.discordId)
+  return (a.userId !== null && a.userId === b.userId)
+    || (Boolean(a.discordId) && a.discordId === b.discordId)
+    || (Boolean(a.extKey) && a.extKey === b.extKey)
 }
 
 const SITE_USER_COLS = 'id, username, admin, discord_id, discord_name, chat_display_name'
@@ -505,11 +531,16 @@ const SITE_USER_COLS = 'id, username, admin, discord_id, discord_name, chat_disp
 // Discord id pulls the site account it is linked to (if any). null = unknown
 // site account (Discord ids always resolve - the user may not have linked).
 export async function resolveWebhookTarget(target: WebhookTarget): Promise<WebhookIdentity | null> {
+  // Another platform's identity has no site account and no Discord side. Its display name comes with its
+  // messages (holt), so the key's subject stands in until then.
+  if (target.kind === 'ext') {
+    return { userId: null, discordId: null, extKey: target.key, name: target.key.slice(target.key.indexOf(':') + 1), user: null }
+  }
   if (target.kind === 'site') {
     const { rows } = await query<WebhookSiteUser>(`SELECT ${SITE_USER_COLS} FROM users WHERE id = $1`, [target.userId])
     const user = rows[0]
     if (!user) return null
-    return { userId: user.id, discordId: user.discord_id || null, name: user.username, user }
+    return { userId: user.id, discordId: user.discord_id || null, extKey: null, name: user.username, user }
   }
   const { rows } = await query<WebhookSiteUser>(`SELECT ${SITE_USER_COLS} FROM users WHERE discord_id = $1`, [target.discordId])
     .catch(() => ({ rows: [] as WebhookSiteUser[] }))
@@ -521,6 +552,7 @@ export async function resolveWebhookTarget(target: WebhookTarget): Promise<Webho
   return {
     userId: user ? user.id : null,
     discordId: target.discordId,
+    extKey: null,
     name: member?.display_name || member?.username || user?.discord_name || user?.username || target.discordId,
     user,
   }
@@ -541,7 +573,7 @@ export async function chatPermsForIdentity(identity: WebhookIdentity, guildId: s
 export async function emitWebhookPermsChanged(userId: number): Promise<void> {
   try {
     const { rows } = await query<{ discord_id: string | null }>(`SELECT discord_id FROM users WHERE id = $1`, [userId])
-    const keys = webhookKeys({ userId, discordId: rows[0]?.discord_id || null })
+    const keys = webhookKeys({ userId, discordId: rows[0]?.discord_id || null, extKey: null })
     const { DISCORD_BRIDGE_OWNER_KEY, emit } = await import('./events.js')
     // guildId null: perks apply in every bridged guild.
     await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.perms.changed', { userId, keys, reason: 'perks', guildId: null })
@@ -577,20 +609,21 @@ export interface ActiveTimeout {
 // Rows are keyed (subject_type, subject): 'discord' + snowflake or 'site' +
 // site user id (migration 020). A linked identity matches either row.
 export async function activeTimeout(channelId: string, subject: WebhookSubject): Promise<ActiveTimeout | null> {
-  if (subject.userId === null && !subject.discordId) return null
+  if (subject.userId === null && !subject.discordId && !subject.extKey) return null
   const row = await query<{ id: string; channel_id: string; subject: string; subject_type: string; reason: string; issued_by_name: string; timeout_until: Date }>(
     `SELECT id, channel_id, subject, subject_type, reason, issued_by_name, timeout_until
      FROM discord_bridge_timeout
      WHERE channel_id = $1 AND revoked_at IS NULL AND timeout_until > NOW()
-       AND ((subject_type = 'discord' AND subject = $2) OR (subject_type = 'site' AND subject = $3))
+       AND ((subject_type = 'discord' AND subject = $2) OR (subject_type = 'site' AND subject = $3)
+            OR (subject_type = 'ext' AND subject = $4))
      ORDER BY timeout_until DESC LIMIT 1`,
-    [channelId, subject.discordId || '', subject.userId === null ? '' : String(subject.userId)],
+    [channelId, subject.discordId || '', subject.userId === null ? '' : String(subject.userId), subject.extKey || ''],
   ).then((r) => r.rows[0]).catch(() => undefined)
   if (!row) return null
   return {
     id: Number(row.id),
     channelId: row.channel_id,
-    subject: row.subject_type === 'site' ? `user:${row.subject}` : `discord:${row.subject}`,
+    subject: row.subject_type === 'site' ? `user:${row.subject}` : row.subject_type === 'ext' ? row.subject : `discord:${row.subject}`,
     reason: row.reason,
     issuedByName: row.issued_by_name,
     timeoutUntil: row.timeout_until.toISOString(),
@@ -631,10 +664,13 @@ export async function chatPermsForChannel(
   return { perms: applyTimeout(perms, timeout), timeout }
 }
 
-function subjectRows(subject: WebhookSubject): Array<['discord' | 'site', string]> {
-  const rows: Array<['discord' | 'site', string]> = []
+// One row per side of the identity. An 'ext' row needs the subject_type CHECK widened (holt phase 1 step 3);
+// until then writing one fails at the database instead of silently skipping the ext side.
+function subjectRows(subject: WebhookSubject): Array<['discord' | 'site' | 'ext', string]> {
+  const rows: Array<['discord' | 'site' | 'ext', string]> = []
   if (subject.discordId) rows.push(['discord', subject.discordId])
   if (subject.userId !== null) rows.push(['site', String(subject.userId)])
+  if (subject.extKey) rows.push(['ext', subject.extKey])
   return rows
 }
 
@@ -663,8 +699,9 @@ export async function revokeTimeout(channelId: string, subject: WebhookSubject):
   const { rowCount } = await query(
     `UPDATE discord_bridge_timeout SET revoked_at = NOW()
      WHERE channel_id = $1 AND revoked_at IS NULL
-       AND ((subject_type = 'discord' AND subject = $2) OR (subject_type = 'site' AND subject = $3))`,
-    [channelId, subject.discordId || '', subject.userId === null ? '' : String(subject.userId)],
+       AND ((subject_type = 'discord' AND subject = $2) OR (subject_type = 'site' AND subject = $3)
+            OR (subject_type = 'ext' AND subject = $4))`,
+    [channelId, subject.discordId || '', subject.userId === null ? '' : String(subject.userId), subject.extKey || ''],
   )
   return rowCount ?? 0
 }
@@ -702,12 +739,13 @@ const ALL_ALLOWED: EffectiveOverwrite = { view: true, send: true, react: true }
 export async function memberOverwrite(channelId: string, subject: WebhookSubject): Promise<{ allow: bigint; deny: bigint }> {
   let allow = 0n
   let deny = 0n
-  if (subject.userId === null && !subject.discordId) return { allow, deny }
+  if (subject.userId === null && !subject.discordId && !subject.extKey) return { allow, deny }
   const rows = await query<{ allow: string; deny: string }>(
     `SELECT allow, deny FROM discord_bridge_webhook_perm
      WHERE channel_id = $1
-       AND ((subject_type = 'user' AND subject = $2) OR (subject_type = 'site' AND subject = $3))`,
-    [channelId, subject.discordId || '', subject.userId === null ? '' : String(subject.userId)],
+       AND ((subject_type = 'user' AND subject = $2) OR (subject_type = 'site' AND subject = $3)
+            OR (subject_type = 'ext' AND subject = $4))`,
+    [channelId, subject.discordId || '', subject.userId === null ? '' : String(subject.userId), subject.extKey || ''],
   ).then((r) => r.rows).catch(() => [] as Array<{ allow: string; deny: string }>)
   for (const r of rows) { allow |= BigInt(r.allow || '0'); deny |= BigInt(r.deny || '0') }
   return { allow, deny }
@@ -761,7 +799,7 @@ export async function webhookOverwrites(
 // (site account id, migration 020).
 export async function setWebhookPerm(input: {
   channelId: string
-  subjectType: 'user' | 'role' | 'site'
+  subjectType: 'user' | 'role' | 'site' | 'ext'
   subject: string
   allow: bigint
   deny: bigint
@@ -790,6 +828,10 @@ export async function setWebhookMemberPerm(input: {
   }
   if (input.subject.userId !== null) {
     await setWebhookPerm({ channelId: input.channelId, subjectType: 'site', subject: String(input.subject.userId), allow: input.allow, deny: input.deny, createdBy: input.createdBy })
+  }
+  // Fails at the database until the subject_type CHECK allows 'ext' (holt phase 1 step 3): loud, not skipped.
+  if (input.subject.extKey) {
+    await setWebhookPerm({ channelId: input.channelId, subjectType: 'ext', subject: input.subject.extKey, allow: input.allow, deny: input.deny, createdBy: input.createdBy })
   }
 }
 

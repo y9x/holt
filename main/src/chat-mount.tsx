@@ -7,6 +7,7 @@
 
 import { useEffect } from 'react'
 import './index.css'
+import './embed/site-fonts.css'
 import { applyTheme } from './lib/theme'
 import { loadBrowserPreferences } from './pages/settings/preferences'
 import { ChatPage } from './pages/chat/chat'

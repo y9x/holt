@@ -1,7 +1,7 @@
 # AGENTS.md — holt
 
 Rules for AI coding agents in this repository. `docs/PLAN.md` says what holt is and where it is
-going; `VENDOR.md` covers the pipeline borrowed from abulxt; this file says how to work here.
+going; `VENDOR.md` says what came from abulxt; this file says how to work here.
 
 ## Hard rules
 
@@ -13,11 +13,14 @@ going; `VENDOR.md` covers the pipeline borrowed from abulxt; this file says how 
   check it loads, restart only what reads them, verify through the real endpoint.
 - **Secrets** live in this host's `main/config.js` (gitignored). `main/config.example.js` holds
   structure only. Never print, log, or commit a platform secret or `sessionSecret`.
-- **Platform trust boundary.** A platform vouches for its users; holt never grants admin from a
-  token (`config.admins` only), never accepts a token for a platform the page's origin does not
-  belong to, and never lets a platform's secret or namespace be shared with another account system.
-  Keep `verifyIdentityToken` strict; do not add claims that widen what a platform can assert without
-  updating `docs/PLAN.md`.
+- **Platform trust boundary.** A platform vouches for its users. Only a platform marked `trusted` (one the
+  operator runs: abulxt, Abstract) may vouch for a linked Discord account, site admin, display name or
+  avatar (forward-auth.ts); partners never can, and an identity token never carries those. holt never
+  accepts a token for a platform the page's origin does not belong to, never lets a platform's secret or
+  namespace be shared with another account system, and a platform's hook pushes may only name keys in its
+  own namespace. Do not widen what a platform can assert without updating `docs/PLAN.md`.
+- **holt owns all its code.** Nothing is vendored or synced from abulxt any more (VENDOR.md). holt never
+  reads another service's database: identities come from platform sign-in and hook pushes.
 - **No cookies or storage for identity.** Sessions are Bearer tokens held in the frame's memory and
   carried through the embed handshake. Inside partner iframes, cookies and storage are third-party.
 - **Licensing stays on.** Every embed path checks `licenseRefusal` (`holt-service.ts`). Never add a route
@@ -26,8 +29,6 @@ going; `VENDOR.md` covers the pipeline borrowed from abulxt; this file says how 
 
 ## Client protection (same rules as abulxt)
 
-- **Vendored files are byte-identical to abulxt** (`scripts/vendor-manifest.json`). Change abulxt
-  first, then `node scripts/vendor-sync.mjs --pull`. `make check` fails on drift.
 - **Compile mode only.** Never set `SHIELD_MODE=manifest` in a committed file, CI workflow, deploy
   script or Makefile. It is a local debug opt-out.
 - **Every build passes the obfuscator, then the canary check** (`make build`). The canary check
@@ -47,7 +48,7 @@ going; `VENDOR.md` covers the pipeline borrowed from abulxt; this file says how 
 
 ## Verification before hand-off
 
-- `make check` (vendor sync, `tsc -b`, `node --test`). `shield/module.test.mjs` "top-level await" is
+- `make check` (`tsc -b`, `node --test`). `shield/module.test.mjs` "top-level await" is
   a known failure inherited from abulxt (the test harness transforms its fixture to `cjs`); it
   fails identically there and is fixed there first.
 - `make build` must end with the canary at exit 0 and dist refs OK.

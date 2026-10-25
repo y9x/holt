@@ -14,11 +14,12 @@ import {
   hasPerm,
   parseWebhookTarget,
   resolveWebhookTarget,
+  webhookKeys,
   type WebhookIdentity,
 } from '../discord-chat-perms.js'
+import { identitiesByName } from '../identity-directory.ts'
 import { banListLine, banScopeFor, moderateWebhook, moderationViewGuild, webhookBanFor, type ModerationRequest } from '../discord-chat-moderation.js'
 import { getConfig } from '../config.js'
-import { query } from '../db.js'
 import type { Command } from './types.js'
 
 // Staff controls for the site chatbox bridge: time out / ban webhooks, list
@@ -56,11 +57,10 @@ async function resolveTargetOption(raw: string): Promise<WebhookIdentity | null>
     const author = parseWebhookTarget(message.authorKey)
     return author ? resolveWebhookTarget(author) : null
   }
-  // A bare site account id or site username.
-  if (/^\d{1,10}$/.test(value)) return resolveWebhookTarget({ kind: 'site', userId: Number(value) })
-  const byName = await query<{ id: number }>(`SELECT id FROM users WHERE lower(username) = lower($1) LIMIT 1`, [value])
-    .then((r) => r.rows[0]).catch(() => undefined)
-  return byName ? resolveWebhookTarget({ kind: 'site', userId: byName.id }) : null
+  // A bare abulxt account id (the home site's), or a web identity's name.
+  if (/^\d{1,10}$/.test(value)) return resolveWebhookTarget({ kind: 'ext', key: `abulxt:${value}` })
+  const [byName] = await identitiesByName(value, 1).catch(() => [])
+  return byName ? resolveWebhookTarget({ kind: 'ext', key: byName.key }) : null
 }
 
 // The guild a command acts in: the bridged channel's guild when the channel
@@ -120,7 +120,7 @@ async function moderateAs(
     guildId,
   )
   if (!result.ok) return result.error
-  const who = `**${target.name}** (${[target.userId !== null ? `abulxt:${target.userId}` : '', target.discordId ? `discord:${target.discordId}` : ''].filter(Boolean).join(' / ')})`
+  const who = `**${target.name}** (${webhookKeys(target).join(' / ')})`
   switch (request.action) {
     case 'timeout': return `Timed out ${who} in <#${channelId}> until <t:${Math.floor(new Date(String(result.body.timeoutUntil)).getTime() / 1000)}:R>.`
     case 'untimeout': return `Removed the timeout for ${who} in <#${channelId}>.`
@@ -222,7 +222,7 @@ export default {
         const { identity: actorIdentity, bits } = await actorChatBits(interaction, guildId)
         if (!canBan(bits)) return interaction.reply({ content: 'You do not have permission to ban webhooks.', ephemeral: true })
         if (actorIdentity && (await webhookBanFor(actorIdentity, guildId))) return interaction.reply({ content: 'You are banned from the site chatbox.', ephemeral: true })
-        const scope = banScopeFor({ siteAdmin: actorIdentity?.user?.admin === true, guildId, homeGuildId: homeGuildId() })
+        const scope = banScopeFor({ siteAdmin: actorIdentity?.admin === true, guildId, homeGuildId: homeGuildId() })
         if (sub === 'ban') {
           const reason = interaction.options.getString('reason') || ''
           await bridge.addBan({ ...parsed, reason, createdBy: actor, guildId: scope, issuedInGuildId: guildId })
@@ -277,14 +277,14 @@ export default {
 
     if (sub === 'perms') {
       // Diagnose how the site chatbox resolves a member: their resolved tier,
-      // whether their Discord account is linked to a site account, and whether
+      // whether their Discord account is linked to a web account, and whether
       // their guild roles match any synced chat-role rows. This is the first
       // thing to run when someone reports "no permission" in the site chat.
       const target = interaction.options.getUser('member') || interaction.user
       const { chatPermsForDiscord, hasPerm, Perm } = await import('../discord-chat-perms.js')
-      const { userForDiscordId } = await import('../discord-roles.js')
+      const { identityByDiscordId } = await import('../identity-directory.ts')
       const perms = interaction.guildId ? await chatPermsForDiscord(target.id, interaction.guildId).catch(() => null) : null
-      const linked = await userForDiscordId(target.id).catch(() => null)
+      const linked = await identityByDiscordId(target.id).catch(() => null)
       if (!perms) {
         return interaction.reply({ content: `Could not resolve chat permissions for <@${target.id}> - check the service logs.`, ephemeral: true })
       }
@@ -299,7 +299,7 @@ export default {
       const lines = [
         `**Tier:** ${perms.tier}${perms.roleName ? ` (via role "${perms.roleName}", position ${perms.position})` : ' (no mapped chat role matched - @everyone default)'}`,
         `**Bits:** ${bits.join(', ') || 'none'}`,
-        `**Site account linked:** ${linked ? `yes (site user id ${linked.id}) - web chat uses these perms` : 'NO - on the website this member resolves as a guest. They must link Discord under account settings.'}`,
+        `**Web account linked:** ${linked ? `yes (${linked.key}${linked.admin ? ', site admin' : ''}) - web chat uses these perms` : 'NO - on the website this member resolves as a guest. They must link Discord in their account settings.'}`,
       ]
       if (perms.tier === 'member' || perms.tier === 'guest') {
         lines.push('If this member should be staff: their guild role id must be listed under discord.chatRoles in the site config and the discord service restarted (startup syncs the chat-role table).')

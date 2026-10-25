@@ -22,7 +22,11 @@ export interface UserStateConfig {
   /** Absolute URL of the platform's user-state endpoint. Always this URL, never one from a request. */
   url: string
   /** Field names in the endpoint's JSON. Dotted paths reach into nested objects ("user.id"). */
-  fields: { id: string; name: string; emailVerified: string | null; avatar: string | null }
+  fields: {
+    id: string; name: string; emailVerified: string | null; avatar: string | null
+    /** Trusted platforms only: the linked Discord id, site-admin flag, and chat display name (over `name`). */
+    discordId: string | null; admin: string | null; displayName: string | null
+  }
   /** Cookie names forwarded to `url`. Null forwards every cookie the browser sent. */
   cookies: readonly string[] | null
   /**
@@ -49,19 +53,22 @@ export interface Platform {
   links: PlatformLinks
   userState: UserStateConfig | null
   /**
-   * The full chatbox instead of the identity shell (proxy platforms only). A platform on abulxt accounts
-   * (SITE_NAMESPACE) calls the chat API and realtime on its own origin, which abulxt routes to holt; any
-   * other platform calls them under its `/chat/_holt/api/`, through the same proxy rule as the page.
+   * The full chatbox instead of the identity shell (proxy platforms only). The chatbox calls its API and
+   * realtime socket under the platform's `/chat/_holt/api/`, through the same proxy rule as the page.
    */
   chat: boolean
-}
-
-/** The identity namespace of abulxt's own accounts: the abulxt and Abstract sites sign in with them. */
-export const SITE_NAMESPACE = 'abulxt'
-
-/** Does this platform sign in with abulxt accounts (abulxt's own API resolves them), or its own? */
-export function usesSiteAccounts(platform: Pick<Platform, 'identityNamespace'>): boolean {
-  return platform.identityNamespace === SITE_NAMESPACE
+  /**
+   * The platform may vouch for more than who is signed in (userState.fields.discordId / admin /
+   * displayName): its users chat with their linked Discord member's roles and as site admins. Set only for
+   * platforms the operator controls (abulxt, Abstract), never for partners.
+   */
+  trusted: boolean
+  /**
+   * The platform's private hook (loopback or https), signed both ways with `secret` (hook-signature.ts):
+   * holt relays the platform's own Discord commands, buttons and home-guild member events to it, and the
+   * platform tells holt when an identity changed or was deleted (`/<id>/_holt/platform/*`). Null: none.
+   */
+  hook: { url: string; secret: string } | null
 }
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/
@@ -144,7 +151,10 @@ function parseUserState(id: string, value: unknown): UserStateConfig | null {
   if (tokenStorageKey !== null && !STORAGE_KEY.test(tokenStorageKey)) fail(id, 'userState.tokenStorageKey is not a storage key')
   return {
     url,
-    fields: { id: field('id', 'id')!, name: field('name', 'username')!, emailVerified: field('emailVerified', 'email_verified'), avatar: field('avatar', 'avatar') },
+    fields: {
+      id: field('id', 'id')!, name: field('name', 'username')!, emailVerified: field('emailVerified', 'email_verified'), avatar: field('avatar', 'avatar'),
+      discordId: field('discordId', null), admin: field('admin', null), displayName: field('displayName', null),
+    },
     cookies,
     tokenStorageKey,
     tokenHeader,
@@ -181,6 +191,20 @@ function parsePlatform(entry: unknown, index: number): Platform {
   if (raw.chat !== undefined && typeof raw.chat !== 'boolean') fail(id, 'chat must be true or false')
   const chat = raw.chat === true
   if (chat && userState === null) fail(id, 'chat needs proxy embedding (userState): the chatbox calls the chat API on its own origin')
+  if (raw.trusted !== undefined && typeof raw.trusted !== 'boolean') fail(id, 'trusted must be true or false')
+  const trusted = raw.trusted === true
+  // Only a trusted platform may vouch for a Discord account or an admin: anything else would let a partner
+  // hand its users another member's roles.
+  if (!trusted && userState && (userState.fields.discordId || userState.fields.admin)) fail(id, 'userState.fields.discordId / admin need trusted: true')
+  let hook: Platform['hook'] = null
+  if (raw.hook !== undefined && raw.hook !== null) {
+    const h = (typeof raw.hook === 'object' ? raw.hook : {}) as Record<string, unknown>
+    const hookUrl = text(h.url) ?? fail(id, 'hook.url is required')
+    if (!/^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?\/)/.test(hookUrl)) fail(id, 'hook.url must be https or loopback http')
+    const hookSecret = text(h.secret) ?? fail(id, 'hook.secret is required')
+    if (hookSecret.length < 32) fail(id, 'hook.secret must be at least 32 characters')
+    hook = { url: hookUrl.replace(/\/+$/, ''), secret: hookSecret }
+  }
   return {
     id,
     name,
@@ -196,6 +220,8 @@ function parsePlatform(entry: unknown, index: number): Platform {
     },
     userState,
     chat,
+    trusted,
+    hook,
   }
 }
 

@@ -410,13 +410,13 @@ try {
     check('federation: "who am I" without a session is signed out', (await fed('/_holt/api/auth/me')).status === 401)
 
     const echoed = await json(await fed('/_holt/api/discord/bridge/guilds', { headers: {
-      authorization: `Bearer ${session}`, cookie: 'sid=s_good; wcs=seedvalue', 'x-holt-principal': 'forged.forged', 'x-holt-api': 'site',
+      authorization: `Bearer ${session}`, cookie: 'sid=s_good; wcs=seedvalue', 'x-holt-principal': 'forged.forged', 'x-holt-platform': 'forged.forged',
     } }))
     const h = echoed.body?.headers || {}
     const principal = typeof h['x-holt-principal'] === 'string' ? readPrincipal(h['x-holt-principal'], SESSION_SECRET) : null
     check('federation: the chat API gets a signed principal for the session', principal?.key === 'fed:77', JSON.stringify(h).slice(0, 300))
     check('federation: the partner\'s Authorization and cookies never reach the chat API (only the wcs seed)', h.authorization === undefined && h.cookie === 'wcs=seedvalue', JSON.stringify(h).slice(0, 300))
-    check('federation: the page is marked foreign, whatever the caller claimed', h['x-holt-api'] === 'holt' && h['x-holt-license'] === undefined)
+    check('federation: a forged platform header and the license never reach the chat API', h['x-holt-platform'] === undefined && h['x-holt-license'] === undefined)
     const forgedOnly = await json(await fed('/_holt/api/discord/bridge/guilds', { headers: { 'x-holt-principal': echoed.body?.headers?.['x-holt-principal'] || 'x' } }))
     check('federation: a replayed or forged principal header without a session is dropped', forgedOnly.body?.headers?.['x-holt-principal'] === undefined, JSON.stringify(forgedOnly.body).slice(0, 200))
 

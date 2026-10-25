@@ -16,7 +16,7 @@ the client-protection pipeline borrowed from abulxt.
 | `main/src/server/` | The service (`holt-service.ts`), platform registry, identity tokens, sessions. |
 | `main/src/embed/` | The embed page client (React), compiled to shield bytecode. |
 | `main/loader/holt-embed.js` | The loader script partners include. Served as written (a public SDK). |
-| `main/src/server/shield/`, `main/src/lib/holy-*`, `main/src/components/common/Holy*`, `scripts/*.mjs` | Vendored from abulxt (`scripts/vendor-manifest.json`). |
+| `main/src/server/shield/`, `main/src/lib/holy-*`, `main/src/components/common/Holy*`, `scripts/*.mjs` | The client-protection pipeline (from abulxt originally; holt's own, see VENDOR.md). |
 | `scripts/canary-list.json` | holt's canaries. |
 | `deploy/holt.service` | systemd unit. |
 
@@ -25,7 +25,7 @@ the client-protection pipeline borrowed from abulxt.
 ```sh
 cd main && npm ci && cp config.example.js config.js   # fill in secrets; config.js is gitignored
 cd .. && make build    # Vite build -> obfuscator -> canary check (exit 2 on a leak) -> dist refs
-make check             # vendor sync + typecheck + tests
+make check             # typecheck + tests
 make e2e               # build, then load the compiled embed in Chrome, framed cross-site
 cd main && npm run holt   # 127.0.0.1:8830; serves main/dist, so build first
 ```

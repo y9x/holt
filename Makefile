@@ -11,7 +11,7 @@ SHELL := /usr/bin/env bash
 ROOT  := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 APP   := $(ROOT)/main
 
-# The pipeline is vendored byte-identical from abulxt (VENDOR.md, scripts/vendor-manifest.json).
+# The protection pipeline came from abulxt (VENDOR.md) and is holt's own now.
 # Post-build string obfuscator: encrypts string literals and template quasis in every emitted chunk
 # and the HTML shell. Runs after the build, before the canary check.
 OBFUSCATE   := node "$(ROOT)/scripts/obfuscate-build.mjs"
@@ -22,7 +22,7 @@ CHECK       := node "$(ROOT)/scripts/check-plaintext-leaks.mjs"
 # Dist reference verifier: every shipped reference resolves, emitted names are content hashes.
 VERIFY_REFS := node "$(ROOT)/scripts/check-dist-refs.mjs"
 
-.PHONY: build deps check vendor-check typecheck test e2e clean
+.PHONY: build deps check typecheck test e2e clean
 
 deps:
 	@if [ ! -d "$(APP)/node_modules" ]; then cd "$(APP)" && npm ci; fi
@@ -33,16 +33,13 @@ build: deps
 	$(CHECK) main/dist main/loader
 	$(VERIFY_REFS) main/dist
 
-vendor-check:
-	node "$(ROOT)/scripts/vendor-sync.mjs" --check
-
 typecheck: deps
 	cd "$(APP)" && npx tsc -b
 
 test: deps
 	cd "$(APP)" && npm test
 
-check: vendor-check typecheck test
+check: typecheck test
 
 e2e: build
 	cd "$(APP)" && npm run e2e

@@ -1,14 +1,12 @@
-// holt-chat's realtime socket (/api/rt) for other platforms' users: the chatbox's live bridge events
-// (messages, edits, reactions, typing, moderation, perms and onboarding changes) on a site whose own API is
-// not abulxt's. Reached only as holt-service's WS /<platform>/_holt/api/rt, which passes the caller as a
-// signed X-Holt-Principal (chat-caller.ts); without a valid one the socket is a guest's.
+// holt-chat's realtime socket (/api/rt), for every platform's users: the chatbox's live bridge events
+// (messages, edits, reactions, typing, moderation, perms and onboarding changes) and presence. Reached only as
+// holt-service's WS /<platform>/_holt/api/rt, which passes the caller as a signed X-Holt-Principal
+// (chat-caller.ts); without a valid one the socket is a guest's.
 //
-// abulxt accounts keep using abulxt's own /api/rt (it also carries their account and AI events). This is
-// the bridge half of it, with the same rules: every event goes through allowBridgeEvent for this socket's
-// visibility (socketVisibility, recomputed on perms/onboarding/channel changes, never fail-open), replays
-// are filtered the same way, and frames take the same seal path (rtSend; sealed when config.rtCrypto is on
-// and the client holds the `wcs` seed). There are no account events for these users (they have no abulxt
-// account), so the account stream is answered empty.
+// Every event goes through allowBridgeEvent for this socket's visibility (socketVisibility, recomputed on
+// perms/onboarding/channel changes, never fail-open), replays are filtered the same way, and frames take one
+// seal path (rtSend; sealed when config.rtCrypto is on and the client holds the `wcs` seed). Accounts are
+// the platform's, so the account stream is answered empty.
 
 import type { IncomingMessage } from 'node:http'
 import type { Plugin, ViteDevServer } from 'vite'
@@ -32,16 +30,16 @@ import {
 } from './discord-channel-access.js'
 import { subjectOfUser, webhookKeys } from './discord-chat-perms.js'
 import { deriveRtKeys, deriveRtSubprotocol, openToString, sealString, seedFromCookieHeader, type RtKeys } from '../lib/rt-crypto-codec.ts'
-import { absolutizeSiteAvatars, resolveChatIdentity, siteOriginOf, PRINCIPAL_HEADER, type ChatIdentity } from './chat-caller.ts'
+import { resolveChatIdentity, type ChatIdentity } from './chat-caller.ts'
+import { presenceAttach, presenceDetach, presenceSelfPayload, presenceTouch } from './presence.js'
 
-async function rtCryptoConfig(): Promise<{ enabled: boolean; padding: number | undefined; sessionSecret: string | null; siteOrigin: string | null }> {
+async function rtCryptoConfig(): Promise<{ enabled: boolean; padding: number | undefined; sessionSecret: string | null }> {
   const config = await loadConfig().catch(() => null) as { rtCrypto?: { enabled?: boolean; padding?: number }; sessionSecret?: unknown } | null
   const padding = config?.rtCrypto?.padding
   return {
     enabled: config?.rtCrypto?.enabled === true,
     padding: padding && padding > 0 ? padding : undefined,
     sessionSecret: typeof config?.sessionSecret === 'string' && config.sessionSecret.length >= 32 ? config.sessionSecret : null,
-    siteOrigin: siteOriginOf(config),
   }
 }
 
@@ -86,8 +84,6 @@ export function chatRt(): Plugin {
       await ensureSchema()
       const crypto = await rtCryptoConfig()
       sealingEnabled = crypto.enabled
-      // No principal header: a guest (never abulxt's own token resolution; that socket lives on abulxt).
-      if (request.headers[PRINCIPAL_HEADER] === undefined) request.headers[PRINCIPAL_HEADER] = ''
       const identity = await resolveChatIdentity(request, crypto.sessionSecret)
 
       // Seal negotiation, as abulxt's rt-api: the client offers the subprotocol derived from its `wcs` seed.
@@ -99,12 +95,12 @@ export function chatRt(): Plugin {
       const rtKeys: RtKeys | null = sealed && seed ? (() => { try { return deriveRtKeys(seed) } catch { return null } })() : null
 
       wss!.handleUpgrade(request, socket, head, (ws) => {
-        connection(ws, identity, rtKeys, crypto.padding, crypto.siteOrigin)
+        connection(ws, identity, rtKeys, crypto.padding)
       })
     })
   }
 
-  function connection(ws: WebSocket, identity: ChatIdentity, rtKeys: RtKeys | null, padding: number | undefined, siteOrigin: string | null) {
+  function connection(ws: WebSocket, identity: ChatIdentity, rtKeys: RtKeys | null, padding: number | undefined) {
     const ownerKey = identity.ownerKey
     const deviceId = Math.random().toString(36).slice(2)
     const sealOn = !!rtKeys && ws.protocol === rtKeys.subprotocol
@@ -118,16 +114,15 @@ export function chatRt(): Plugin {
     const subject = subjectOfUser(identity.user)
     const selfKeys = webhookKeys(subject)
     const state: { vis: SocketVisibility | null; queue: RtEvent[]; ready: Promise<void> } = { vis: null, queue: [], ready: Promise.resolve() }
-    // This socket always serves a page on another platform's origin: abulxt avatar paths go absolute.
     const sendBridge = (event: RtEvent) => {
-      if (state.vis && allowBridgeEvent(event, state.vis)) rtSend(absolutizeSiteAvatars(JSON.stringify({ type: 'event', event }), siteOrigin))
+      if (state.vis && allowBridgeEvent(event, state.vis)) rtSend(JSON.stringify({ type: 'event', event }))
     }
     const refresh = () => {
       state.ready = socketVisibility(ownerKey, identity.user)
         .then((vis) => { state.vis = vis })
         .catch(() => {
           // Never fail open: withhold everything until the next refresh.
-          if (!state.vis) state.vis = { channels: new Set(), discordId: null, keys: selfKeys, moderatorChannels: new Set(), siteAdmin: false }
+          if (!state.vis) state.vis = { channels: new Set(), discordId: subject.discordId, keys: selfKeys, moderatorChannels: new Set(), siteAdmin: false }
         })
         .then(() => { for (const event of state.queue.splice(0)) sendBridge(event) })
       return state.ready
@@ -140,13 +135,13 @@ export function chatRt(): Plugin {
       const payload = event.payload || {}
       if (event.type === 'bridge.perms.changed') {
         invalidateVisibilityForEvent(event.seq, payload)
-        if (isGlobalPermsEvent(payload) || eventTargetsIdentity(payload, { keys: selfKeys, discordId: null })) void refresh()
+        if (isGlobalPermsEvent(payload) || eventTargetsIdentity(payload, { keys: selfKeys, discordId: subject.discordId })) void refresh()
       }
       if (event.type === 'bridge.channels.changed') {
         invalidateForChannelsChanged(event.seq, payload)
         void refresh()
       }
-      if (event.type === 'bridge.onboarding.updated' && eventTargetsIdentity(payload, { keys: selfKeys, discordId: null })) {
+      if (event.type === 'bridge.onboarding.updated' && eventTargetsIdentity(payload, { keys: selfKeys, discordId: subject.discordId })) {
         invalidateIdentityVisibility(ownerKey)
         void refresh()
       }
@@ -157,9 +152,17 @@ export function chatRt(): Plugin {
       sendBridge(event)
     })
 
-    // No account stream for these users: sync at 0, replays empty.
+    // No account stream (accounts are the platform's): sync at 0, replays empty.
     rtSend(JSON.stringify({ type: 'sync', seq: 0, deviceId }))
     rtSend(JSON.stringify({ type: 'presence', online: 1 }))
+    // Signed-in identities: presence sockets (Set Status + online/idle, presence.ts).
+    const presenceKey = identity.user?.ext_key ?? null
+    if (presenceKey !== null) {
+      void presenceAttach(presenceKey, ws).then(() => {
+        const self = presenceSelfPayload(presenceKey)
+        if (self) rtSend(JSON.stringify({ type: 'event', event: { seq: 0, type: 'bridge.presence.self', payload: self } }))
+      }).catch(() => {})
+    }
     latestSeq(DISCORD_BRIDGE_OWNER_KEY).then((seq) => { if (seq > 0) rtSend(JSON.stringify({ type: 'bridge.sync', seq })) }).catch(() => {})
 
     ws.on('message', async (raw) => {
@@ -179,6 +182,11 @@ export function chatRt(): Plugin {
       } catch {
         return
       }
+      // Client input heartbeat (throttled client-side): keeps this socket "active" for presence.
+      if (msg.type === 'activity') {
+        if (presenceKey !== null) presenceTouch(presenceKey, ws)
+        return
+      }
       if (msg.type === 'resync') {
         rtSend(JSON.stringify({ type: 'replay', events: [] }))
         return
@@ -192,13 +200,17 @@ export function chatRt(): Plugin {
           const missed = await eventsAfter(DISCORD_BRIDGE_OWNER_KEY, msg.afterSeq)
           await state.ready
           const vis = state.vis
-          if (vis) rtSend(absolutizeSiteAvatars(JSON.stringify({ type: 'bridge.replay', events: missed.filter((event) => allowBridgeEvent(event, vis)) }), siteOrigin))
+          if (vis) rtSend(JSON.stringify({ type: 'bridge.replay', events: missed.filter((event) => allowBridgeEvent(event, vis)) }))
         } catch {
           /* ignore */
         }
       }
     })
-    const close = () => { clearInterval(timer); unsubscribe() }
+    const close = () => {
+      clearInterval(timer)
+      unsubscribe()
+      if (presenceKey !== null) presenceDetach(presenceKey, ws)
+    }
     ws.on('close', close)
     ws.on('error', close)
   }

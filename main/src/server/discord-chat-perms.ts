@@ -1,7 +1,8 @@
 import { getConfig } from './config.js'
 import { query } from './db.js'
 import { cachedGuildMemberRoles } from './discord-roles.js'
-import { siteChatKey, siteIdOfChatKey, type ChatSubjectUser } from './chat-identity-key.ts'
+import { chatKeyOfUser, webIdentityKey, type ChatSubjectUser } from './chat-identity-key.ts'
+import { identityByDiscordId, identityByKey } from './identity-directory.ts'
 
 // Chat permissions as Discord-style permission bitfields over guild roles -
 // NOT site admin. "Webhooks" are the webhook delivery identities (web users and
@@ -206,19 +207,15 @@ async function discordRolePerms(discordId: string, guildId: string): Promise<Cha
   }
 }
 
-// Resolve a site (abulxt) user's chat permissions in ONE bridged guild via
-// their linked Discord's roles there. `guildId` is required: every caller
+// Resolve a web identity's chat permissions in ONE bridged guild: its linked Discord member's roles there
+// (a trusted platform's link), site admin, and its onboarding grants. `guildId` is required: every caller
 // resolves it from the channel (discord_bridge_channel.guild_id) or a
 // validated `guild` param.
 export async function chatPermsForUser(
-  user: {
-    id?: number | null
-    discord_id?: string | null
-    admin?: boolean
-  } | null | undefined,
+  user: (ChatSubjectUser & { admin?: boolean }) | null | undefined,
   guildId: string,
 ): Promise<ChatPerms> {
-  if (!user) return GUEST
+  if (!user || (!user.ext_key && !user.discord_id)) return GUEST
   const base = user.discord_id ? await discordRolePerms(user.discord_id, guildId) : GUEST
   // Site admins inherit the admin tier (applySiteAdmin), linked or not.
   const admined = applySiteAdmin(base, user.admin ? await siteAdminRole(guildId) : null)
@@ -418,13 +415,10 @@ export async function siteAdminRole(guildId: string): Promise<SiteAdminRole> {
   return value
 }
 
-// Discord account linked to a site admin account (users.admin).
+// Discord account a trusted platform linked to one of its site admins (identity directory).
 async function linkedSiteAdmin(discordId: string): Promise<boolean> {
-  const { rows } = await query<{ admin: boolean }>(
-    `SELECT admin FROM users WHERE discord_id = $1 LIMIT 1`,
-    [discordId],
-  ).catch(() => ({ rows: [] as Array<{ admin: boolean }> }))
-  return rows[0]?.admin === true
+  const dir = await identityByDiscordId(discordId).catch(() => null)
+  return dir?.admin === true
 }
 
 // Pure: lift perms to the site-admin tier. `admin` null = not a site admin
@@ -446,65 +440,42 @@ export function applySiteAdmin(perms: ChatPerms, admin: SiteAdminRole | null): C
 
 // --- Webhook identities ------------------------------------------------------
 //
-// One target-identity model for every moderation action. A webhook is either
-// a site account (web-originated rows: author_key `user:<id>`) or a Discord
-// user (Discord-originated rows: `discord:<id>`). A site account with a linked
-// Discord is ONE webhook: both keys resolve to the same identity, so a
-// timeout/ban/overwrite issued against either side applies to both.
+// One target-identity model for every moderation action. A webhook is a web identity (a platform's user,
+// `<namespace>:<subject>`: `abulxt:42`, `lab:1`) or a Discord user (`discord:<id>`). A web identity whose
+// trusted platform vouches for a linked Discord account (holt's identity directory) is ONE webhook with it:
+// both keys resolve to the same identity, so a timeout/ban/overwrite issued against either side applies to
+// both.
 //
 //   WebhookTarget   - what a caller names (parsed from an author key / id).
 //   WebhookSubject  - both sides of a resolved identity (either may be null).
-//   WebhookIdentity - a resolved subject + display name + site perk fields.
+//   WebhookIdentity - a resolved subject + display name + site-admin flag.
 
-// A webhook identity: a site account, a Discord user, or (holt proxy embedding) an identity from another
-// platform, keyed `<namespace>:<subject>` (for example `nocturne:u_77`). `abulxt:<n>` is the site account n.
-export type WebhookTarget = { kind: 'site'; userId: number } | { kind: 'discord'; discordId: string } | { kind: 'ext'; key: string }
+export type WebhookTarget = { kind: 'discord'; discordId: string } | { kind: 'ext'; key: string }
 
 export interface WebhookSubject {
-  userId: number | null
   discordId: string | null
-  /** Another platform's identity (`<namespace>:<subject>`), or null. Never a site or Discord key. */
+  /** The web identity key (`<namespace>:<subject>`), or null. Never a Discord or guest key. */
   extKey: string | null
-}
-
-export interface WebhookSiteUser {
-  id: number
-  username: string
-  admin: boolean
-  discord_id: string | null
-  discord_name?: string | null
-  chat_display_name?: string | null
 }
 
 export interface WebhookIdentity extends WebhookSubject {
   name: string
-  user: WebhookSiteUser | null
+  /** Site admin, as its trusted platform last said (identity directory). */
+  admin: boolean
 }
 
 const SNOWFLAKE_RE = /^\d{15,22}$/
-const EXT_KEY_RE = /^([a-z][a-z0-9-]{0,31}):([A-Za-z0-9._-]{1,128})$/
-/** Namespaces that are not another platform: this site's own keys, Discord, guests, holt itself. */
-const RESERVED_NAMESPACES = new Set(['user', 'discord', 'guest', 'holt'])
-/** This site's namespace in holt: `abulxt:<n>` is the site account n. */
-const SITE_NAMESPACE = 'abulxt'
 
-/** `<namespace>:<subject>` for another platform's identity, or null when `raw` is not one. Pure. */
+/** The web identity key in `raw` (normalised: `user:<n>` → `abulxt:<n>`), or null. Pure. */
 export function extKeyOf(raw: string): string | null {
-  const match = EXT_KEY_RE.exec(raw)
-  if (!match || RESERVED_NAMESPACES.has(match[1]) || match[1] === SITE_NAMESPACE) return null
-  return raw
+  return webIdentityKey(raw)
 }
 
-// Parse a target as the client / slash commands name it: an author key
-// (`user:<siteId>` / `discord:<snowflake>`) or a bare Discord snowflake.
+// Parse a target as the client / slash commands name it: an author key (`<ns>:<subject>` / `discord:<id>`)
+// or a bare Discord snowflake.
 export function parseWebhookTarget(raw: unknown): WebhookTarget | null {
   if (typeof raw !== 'string') return null
   const value = raw.trim()
-  // `abulxt:<n>` (since migration 037) or the legacy `user:<n>`: the site account n.
-  if (/^(?:abulxt|user):/.test(value)) {
-    const userId = siteIdOfChatKey(value)
-    return userId === null ? null : { kind: 'site', userId }
-  }
   const discord = /^discord:(\d{15,22})$/.exec(value)
   if (discord) return { kind: 'discord', discordId: discord[1] }
   if (SNOWFLAKE_RE.test(value)) return { kind: 'discord', discordId: value }
@@ -512,87 +483,66 @@ export function parseWebhookTarget(raw: unknown): WebhookTarget | null {
   return ext ? { kind: 'ext', key: ext } : null
 }
 
-// The caller's own webhook subject (a signed-in site user, or another platform's identity via holt).
+// The caller's own webhook subject.
 export function subjectOfUser(user: ChatSubjectUser | null | undefined): WebhookSubject {
-  const extKey = user?.id == null && user?.ext_key ? extKeyOf(user.ext_key) : null
-  return { userId: user?.id ?? null, discordId: user?.discord_id || null, extKey }
+  return { discordId: user?.discord_id || null, extKey: chatKeyOfUser(user) }
 }
 
 // Every author/reactor key this webhook appears under.
 export function webhookKeys(subject: WebhookSubject): string[] {
   const keys: string[] = []
-  if (subject.userId !== null) keys.push(siteChatKey(subject.userId))
-  if (subject.discordId) keys.push(`discord:${subject.discordId}`)
   if (subject.extKey) keys.push(subject.extKey)
+  if (subject.discordId) keys.push(`discord:${subject.discordId}`)
   return keys
 }
 
-// The canonical key for one identity (events, audit log): the site key when
-// there is a site account, else the Discord key.
+// The canonical key for one identity (events, audit log): the web key when there is one, else the Discord key.
 export function webhookKey(subject: WebhookSubject): string {
   return webhookKeys(subject)[0] || ''
 }
 
 // Same webhook? (Linked accounts match on either side.)
 export function sameWebhook(a: WebhookSubject, b: WebhookSubject): boolean {
-  return (a.userId !== null && a.userId === b.userId)
-    || (Boolean(a.discordId) && a.discordId === b.discordId)
+  return (Boolean(a.discordId) && a.discordId === b.discordId)
     || (Boolean(a.extKey) && a.extKey === b.extKey)
 }
 
-const SITE_USER_COLS = 'id, username, admin, discord_id, discord_name, chat_display_name'
-
-// Resolve a target both ways: a site account pulls its linked Discord id; a
-// Discord id pulls the site account it is linked to (if any). null = unknown
-// site account (Discord ids always resolve - the user may not have linked).
+// Resolve a target both ways through holt's identity directory: a web identity pulls the Discord account its
+// trusted platform linked; a Discord id pulls the web identity linked to it (if any). Always resolves: an
+// identity holt has not seen yet keeps its key's subject as its name.
 export async function resolveWebhookTarget(target: WebhookTarget): Promise<WebhookIdentity | null> {
-  // Another platform's identity has no site account and no Discord side. Its display name comes with its
-  // messages (holt), so the key's subject stands in until then.
   if (target.kind === 'ext') {
-    return { userId: null, discordId: null, extKey: target.key, name: target.key.slice(target.key.indexOf(':') + 1), user: null }
+    const dir = await identityByKey(target.key).catch(() => null)
+    return { extKey: target.key, discordId: dir?.discordId ?? null, name: dir?.name || target.key.slice(target.key.indexOf(':') + 1), admin: dir?.admin === true }
   }
-  if (target.kind === 'site') {
-    const { rows } = await query<WebhookSiteUser>(`SELECT ${SITE_USER_COLS} FROM users WHERE id = $1`, [target.userId])
-    const user = rows[0]
-    if (!user) return null
-    return { userId: user.id, discordId: user.discord_id || null, extKey: null, name: user.username, user }
-  }
-  const { rows } = await query<WebhookSiteUser>(`SELECT ${SITE_USER_COLS} FROM users WHERE discord_id = $1`, [target.discordId])
-    .catch(() => ({ rows: [] as WebhookSiteUser[] }))
-  const user = rows[0] || null
+  const dir = await identityByDiscordId(target.discordId).catch(() => null)
   const member = await query<{ display_name: string; username: string }>(
     `SELECT display_name, username FROM discord_bridge_guild_member WHERE user_id = $1 LIMIT 1`,
     [target.discordId],
   ).then((r) => r.rows[0]).catch(() => undefined)
   return {
-    userId: user ? user.id : null,
     discordId: target.discordId,
-    extKey: null,
-    name: member?.display_name || member?.username || user?.discord_name || user?.username || target.discordId,
-    user,
+    extKey: dir?.key ?? null,
+    name: member?.display_name || member?.username || dir?.name || target.discordId,
+    admin: dir?.admin === true,
   }
 }
 
-// A resolved webhook's chat perms in one guild: site accounts go through
-// chatPermsForUser (linked Discord roles); Discord-only
-// identities through their roles in that guild.
+// A resolved webhook's chat perms in one guild: its linked Discord member's roles there (if any), site admin,
+// and the roles its onboarding answers in that guild grant.
 export async function chatPermsForIdentity(identity: WebhookIdentity, guildId: string): Promise<ChatPerms> {
-  if (identity.user) return chatPermsForUser(identity.user, guildId)
-  // Another platform's identity (extKey) holds the roles its onboarding answers in this guild grant.
-  return withEffectiveRolesSafe({ id: null, discord_id: identity.discordId, ext_key: identity.extKey }, await chatPermsForDiscord(identity.discordId, guildId), guildId)
+  return chatPermsForUser({ ext_key: identity.extKey, discord_id: identity.discordId, admin: identity.admin }, guildId)
 }
 
-// A site account's Discord-side state changed: its effective roles, channel
-// visibility, perms and author color may have too. Targeted bridge.perms.changed (keys + userId,
-// no discordId) so only that webhook's sockets refresh perms + sidebar, and
-// the app server drops its cached views of it. Best-effort.
-export async function emitWebhookPermsChanged(userId: number): Promise<void> {
+// Identities changed on their platform (link, admin, name, avatar): their effective roles, channel visibility,
+// perms and author colour may have too. Targeted bridge.perms.changed (keys, no discordId) so only those
+// webhooks' sockets refresh perms + sidebar. Best-effort.
+export async function emitIdentitiesChanged(keys: string[]): Promise<void> {
+  if (!keys.length) return
   try {
-    const { rows } = await query<{ discord_id: string | null }>(`SELECT discord_id FROM users WHERE id = $1`, [userId])
-    const keys = webhookKeys({ userId, discordId: rows[0]?.discord_id || null, extKey: null })
     const { DISCORD_BRIDGE_OWNER_KEY, emit } = await import('./events.js')
-    // guildId null: perks apply in every bridged guild.
-    await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.perms.changed', { userId, keys, reason: 'perks', guildId: null })
+    // guildId null: a platform-side change applies in every bridged guild.
+    await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.perms.changed', { keys, reason: 'identity', guildId: null })
   } catch {
     // Realtime refresh is best-effort; the 45s visibility refresh catches up.
   }
@@ -622,24 +572,23 @@ export interface ActiveTimeout {
   timeoutUntil: string
 }
 
-// Rows are keyed (subject_type, subject): 'discord' + snowflake or 'site' +
-// site user id (migration 020). A linked identity matches either row.
+// Rows are keyed (subject_type, subject): 'discord' + snowflake or 'ext' + web identity key. A linked
+// identity matches either row.
 export async function activeTimeout(channelId: string, subject: WebhookSubject): Promise<ActiveTimeout | null> {
-  if (subject.userId === null && !subject.discordId && !subject.extKey) return null
+  if (!subject.discordId && !subject.extKey) return null
   const row = await query<{ id: string; channel_id: string; subject: string; subject_type: string; reason: string; issued_by_name: string; timeout_until: Date }>(
     `SELECT id, channel_id, subject, subject_type, reason, issued_by_name, timeout_until
      FROM discord_bridge_timeout
      WHERE channel_id = $1 AND revoked_at IS NULL AND timeout_until > NOW()
-       AND ((subject_type = 'discord' AND subject = $2) OR (subject_type = 'site' AND subject = $3)
-            OR (subject_type = 'ext' AND subject = $4))
+       AND ((subject_type = 'discord' AND subject = $2) OR (subject_type = 'ext' AND subject = $3))
      ORDER BY timeout_until DESC LIMIT 1`,
-    [channelId, subject.discordId || '', subject.userId === null ? '' : String(subject.userId), subject.extKey || ''],
+    [channelId, subject.discordId || '', subject.extKey || ''],
   ).then((r) => r.rows[0]).catch(() => undefined)
   if (!row) return null
   return {
     id: Number(row.id),
     channelId: row.channel_id,
-    subject: row.subject_type === 'site' ? siteChatKey(Number(row.subject)) : row.subject_type === 'ext' ? row.subject : `discord:${row.subject}`,
+    subject: row.subject_type === 'ext' ? row.subject : `discord:${row.subject}`,
     reason: row.reason,
     issuedByName: row.issued_by_name,
     timeoutUntil: row.timeout_until.toISOString(),
@@ -680,12 +629,10 @@ export async function chatPermsForChannel(
   return { perms: applyTimeout(perms, timeout), timeout }
 }
 
-// One row per side of the identity. An 'ext' row needs the subject_type CHECK widened (holt phase 1 step 3);
-// until then writing one fails at the database instead of silently skipping the ext side.
-function subjectRows(subject: WebhookSubject): Array<['discord' | 'site' | 'ext', string]> {
-  const rows: Array<['discord' | 'site' | 'ext', string]> = []
+// One row per side of the identity.
+function subjectRows(subject: WebhookSubject): Array<['discord' | 'ext', string]> {
+  const rows: Array<['discord' | 'ext', string]> = []
   if (subject.discordId) rows.push(['discord', subject.discordId])
-  if (subject.userId !== null) rows.push(['site', String(subject.userId)])
   if (subject.extKey) rows.push(['ext', subject.extKey])
   return rows
 }
@@ -715,9 +662,8 @@ export async function revokeTimeout(channelId: string, subject: WebhookSubject):
   const { rowCount } = await query(
     `UPDATE discord_bridge_timeout SET revoked_at = NOW()
      WHERE channel_id = $1 AND revoked_at IS NULL
-       AND ((subject_type = 'discord' AND subject = $2) OR (subject_type = 'site' AND subject = $3)
-            OR (subject_type = 'ext' AND subject = $4))`,
-    [channelId, subject.discordId || '', subject.userId === null ? '' : String(subject.userId), subject.extKey || ''],
+       AND ((subject_type = 'discord' AND subject = $2) OR (subject_type = 'ext' AND subject = $3))`,
+    [channelId, subject.discordId || '', subject.extKey || ''],
   )
   return rowCount ?? 0
 }
@@ -757,20 +703,17 @@ export function resolveOverwrites(
 
 const ALL_ALLOWED: EffectiveOverwrite = { view: true, send: true, react: true, reply: true }
 
-// The member-level overwrite rows for one webhook: Discord-user rows
-// (subject_type 'user') and site-account rows (subject_type 'site',
-// migration 020) are merged, so an overwrite on either side of a linked
-// identity applies.
+// The member-level overwrite rows for one webhook: Discord-user rows (subject_type 'user') and web identity
+// rows (subject_type 'ext') are merged, so an overwrite on either side of a linked identity applies.
 export async function memberOverwrite(channelId: string, subject: WebhookSubject): Promise<{ allow: bigint; deny: bigint }> {
   let allow = 0n
   let deny = 0n
-  if (subject.userId === null && !subject.discordId && !subject.extKey) return { allow, deny }
+  if (!subject.discordId && !subject.extKey) return { allow, deny }
   const rows = await query<{ allow: string; deny: string }>(
     `SELECT allow, deny FROM discord_bridge_webhook_perm
      WHERE channel_id = $1
-       AND ((subject_type = 'user' AND subject = $2) OR (subject_type = 'site' AND subject = $3)
-            OR (subject_type = 'ext' AND subject = $4))`,
-    [channelId, subject.discordId || '', subject.userId === null ? '' : String(subject.userId), subject.extKey || ''],
+       AND ((subject_type = 'user' AND subject = $2) OR (subject_type = 'ext' AND subject = $3))`,
+    [channelId, subject.discordId || '', subject.extKey || ''],
   ).then((r) => r.rows).catch(() => [] as Array<{ allow: string; deny: string }>)
   for (const r of rows) { allow |= BigInt(r.allow || '0'); deny |= BigInt(r.deny || '0') }
   return { allow, deny }
@@ -820,11 +763,10 @@ export async function webhookOverwrites(
   return resolveOverwrites(perms ? perms.permissions : MEMBER_PERMS, { allow: roleAllow, deny: roleDeny }, member)
 }
 
-// subject_type: 'role' (chat role id), 'user' (Discord user id), 'site'
-// (site account id, migration 020).
+// subject_type: 'role' (chat role id), 'user' (Discord user id), 'ext' (web identity key).
 export async function setWebhookPerm(input: {
   channelId: string
-  subjectType: 'user' | 'role' | 'site' | 'ext'
+  subjectType: 'user' | 'role' | 'ext'
   subject: string
   allow: bigint
   deny: bigint
@@ -839,8 +781,8 @@ export async function setWebhookPerm(input: {
   )
 }
 
-// Set one webhook's member overwrite on every side of its identity (site row
-// + Discord row for a linked account), so the overwrite follows the identity.
+// Set one webhook's member overwrite on every side of its identity (web row + Discord row for a linked
+// account), so the overwrite follows the identity.
 export async function setWebhookMemberPerm(input: {
   channelId: string
   subject: WebhookSubject
@@ -851,10 +793,6 @@ export async function setWebhookMemberPerm(input: {
   if (input.subject.discordId) {
     await setWebhookPerm({ channelId: input.channelId, subjectType: 'user', subject: input.subject.discordId, allow: input.allow, deny: input.deny, createdBy: input.createdBy })
   }
-  if (input.subject.userId !== null) {
-    await setWebhookPerm({ channelId: input.channelId, subjectType: 'site', subject: String(input.subject.userId), allow: input.allow, deny: input.deny, createdBy: input.createdBy })
-  }
-  // Fails at the database until the subject_type CHECK allows 'ext' (holt phase 1 step 3): loud, not skipped.
   if (input.subject.extKey) {
     await setWebhookPerm({ channelId: input.channelId, subjectType: 'ext', subject: input.subject.extKey, allow: input.allow, deny: input.deny, createdBy: input.createdBy })
   }

@@ -23,6 +23,8 @@ export function issueSession(principal: Principal, secret: string, nowMs = Date.
     ev: principal.emailVerified,
     avatar: principal.avatar,
     tier: principal.tier,
+    ...(principal.discordId ? { did: principal.discordId } : {}),
+    ...(principal.admin ? { adm: true } : {}),
   }, secret)
 }
 
@@ -46,5 +48,7 @@ export function readSession(token: string, secret: string, nowMs = Date.now()): 
     emailVerified: claims.ev === true,
     avatar: typeof claims.avatar === 'string' ? claims.avatar : null,
     tier: typeof claims.tier === 'string' ? claims.tier : null,
+    discordId: typeof claims.did === 'string' && /^\d{15,22}$/.test(claims.did) ? claims.did : null,
+    admin: claims.adm === true,
   }
 }

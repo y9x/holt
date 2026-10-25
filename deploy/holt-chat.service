@@ -1,13 +1,13 @@
 [Unit]
-Description=holt chat API (abulxt's bridge API, served by holt; vite.chat.config.ts)
+Description=holt chat API and realtime (vite.chat.config.ts)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/holt
-# Config comes from /opt/holt/config.js, which spreads abulxt's config (same database, same Discord
-# application). Listens on 127.0.0.1:8831; reached only through holt-service's licensed proxy.
+# Config comes from /opt/holt/config.js (holt's own database). Listens on 127.0.0.1:8831; reached only
+# through holt-service (licensed proxy, signed caller).
 ExecStart=/usr/bin/npm run chat-api
 Restart=on-failure
 RestartSec=3

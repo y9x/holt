@@ -193,6 +193,28 @@ Decided while building, revisit if wanted:
   stand-in) and takes "who am I" from holt (auth-api stand-in), with sign-in going to the platform.
 - **F6 nocturne.** its userState URL + cookie name, `chat: true`, its license (issued), go live.
 
+**Standalone (owner's decisions 2026-10-24).** holt depends on nothing of abulxt's:
+- *Own database*: a `holt` database in the same Postgres container on amph, own role. Chat tables move in one
+  cutover (backup, a few minutes of chat downtime): discord_bridge_*, moderation_event, the bridge rows of
+  event_log (seq continues above abulxt's). holt's schema.sql is its own (baseline = those tables + holt
+  migrations), never abulxt's.
+- *Every platform signs in the same way* (`/<id>/_holt/session`, forward-auth). abulxt and Abstract are
+  `trusted` platforms: their user-state answer may vouch for a linked Discord id (that member's real roles),
+  site admin, display name and moderated avatar. Partners can't. Every web identity is a `<ns>:<subject>` key
+  backed by holt's `chat_identity` directory (refreshed on each sign-in); the `site` identity kind is gone
+  (bans/timeouts/overwrites with subject_type 'site' become 'ext' `abulxt:<n>`). Presence (Set Status) and the
+  server-rail folders move to holt tables keyed by chat key.
+- *abulxt's bot features go back to abulxt, one bot*: holt keeps the only gateway connection and relays
+  abulxt-owned interactions (verify, manverify, deletion*, panel, links, linkadmin, ai) and home-guild member
+  join/leave to abulxt's community service over a signed loopback hook; abulxt answers them itself (REST +
+  interaction callbacks), runs the entitlement sweep and the verification server (8823). holt registers the
+  commands abulxt describes (`GET <hook>/commands`).
+- *holt owns all its code*: vendoring ends (no manifest, no vendor-sync). abulxt deletes its chatbox copy,
+  the chat server modules and the `holtChat` fallback; abulxt's `/chat/` stays an iframe of holt.
+- *Own config*: /opt/holt/config.js stops spreading abulxt's.
+- abulxt tells holt when an account changes (link, display name, avatar, admin, deletion) through
+  `/<id>/_holt/platform/*` (license-authenticated, loopback).
+
 **Phase 2 — client move.** `pages/chat/*` moves into `main/src/` and mounts inside the embed shell
 (`main/src/embed/App.tsx`). It already builds through the same pipeline, so its 88 Holy wrappers
 carry over unchanged; its strings join `obfuscation-strings.ts`. Every account affordance (avatar click → profile, "Edit profile",

@@ -27,7 +27,9 @@ export type LoginResult =
   | { kind: 'done'; user: AbulxtUser }
   | { kind: '2fa'; pending: string; needsTotp: boolean }
 
-const tokenKey = 'abulxt:auth-token'
+// holt's own session (embed/proxy-session.ts), never the platform's login: on abulxt's site the platform's
+// token lives under abulxt:auth-token on the same origin.
+const tokenKey = 'holt:session'
 const base = apiUrl('/api/auth')
 const accountBase = apiUrl('/api/account')
 const webauthnBase = apiUrl('/api/webauthn')

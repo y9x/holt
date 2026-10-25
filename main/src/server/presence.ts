@@ -1,18 +1,17 @@
-// Site-account presence (web webhooks). The stored choice (users.presence_status:
-// online | idle | dnd | invisible) is persisted; the live state (online / idle /
+// Web identity presence (web webhooks, any platform), keyed by chat identity key. The stored choice
+// (chat_presence.status: online | idle | dnd | invisible) is persisted; the live state (online / idle /
 // offline) is derived from this process's realtime sockets and their last
 // activity. Nothing live is stored, so presence is per app-server process, like
 // the rate limits.
 //
 // Fan-out is scoped and ephemeral (no event_log rows):
-//   - `bridge.presence.self` (keys: user:<id>) goes to that account's own sockets
+//   - `bridge.presence.self` (keys: [key]) goes to that identity's own sockets
 //     with the shown state, including `invisible`.
-//   - `bridge.presence` (keys: user:<id>, status) goes only to sockets that can see
+//   - `bridge.presence` (keys: [key], status) goes only to sockets that can see
 //     some channel (shared guild context), never to the owner, and never reveals
 //     invisibility: an invisible user is `offline` to everyone else.
 import { query } from './db.js'
 import { broadcastEphemeral, DISCORD_BRIDGE_OWNER_KEY } from './events.js'
-import { siteChatKeys } from './chat-identity-key.ts'
 
 export const PRESENCE_CHOICES = ['online', 'idle', 'dnd', 'invisible'] as const
 export type PresenceChoice = (typeof PRESENCE_CHOICES)[number]
@@ -73,18 +72,18 @@ interface Connected {
   sockets: Map<object, number>
 }
 
-const connected = new Map<number, Connected>()
+const connected = new Map<string, Connected>()
 // Stored choices are cached only while the account has a socket here.
-const choices = new Map<number, PresenceChoice>()
-const loading = new Map<number, Promise<PresenceChoice>>()
+const choices = new Map<string, PresenceChoice>()
+const loading = new Map<string, Promise<PresenceChoice>>()
 // Last published signature per account, so unchanged state is not re-sent.
-const published = new Map<number, string>()
+const published = new Map<string, string>()
 let sweepTimer: ReturnType<typeof setInterval> | null = null
 
-function viewFor(userId: number, now = Date.now()): PresenceView | null {
-  const entry = connected.get(userId)
+function viewFor(key: string, now = Date.now()): PresenceView | null {
+  const entry = connected.get(key)
   if (!entry || entry.sockets.size === 0) return { shown: 'offline', public: 'offline' }
-  const choice = choices.get(userId)
+  const choice = choices.get(key)
   // Fail closed: until the stored choice is loaded nothing is published.
   if (!choice) return null
   let lastActiveAt: number | null = null
@@ -92,31 +91,30 @@ function viewFor(userId: number, now = Date.now()): PresenceView | null {
   return derivePresence({ choice, sockets: entry.sockets.size, lastActiveAt, now })
 }
 
-function loadChoice(userId: number): Promise<PresenceChoice> {
-  const cached = choices.get(userId)
+function loadChoice(key: string): Promise<PresenceChoice> {
+  const cached = choices.get(key)
   if (cached) return Promise.resolve(cached)
-  const pending = loading.get(userId)
+  const pending = loading.get(key)
   if (pending) return pending
-  const promise = query<{ presence_status: string | null }>('SELECT presence_status FROM users WHERE id = $1', [userId])
+  const promise = query<{ status: string | null }>('SELECT status FROM chat_presence WHERE key = $1', [key])
     .then(({ rows }) => {
-      const choice: PresenceChoice = isPresenceChoice(rows[0]?.presence_status) ? rows[0].presence_status as PresenceChoice : 'online'
-      if (connected.has(userId)) choices.set(userId, choice)
+      const choice: PresenceChoice = isPresenceChoice(rows[0]?.status) ? rows[0].status as PresenceChoice : 'online'
+      if (connected.has(key)) choices.set(key, choice)
       return choice
     })
-    .finally(() => { loading.delete(userId) })
-  loading.set(userId, promise)
+    .finally(() => { loading.delete(key) })
+  loading.set(key, promise)
   return promise
 }
 
-function publish(userId: number): void {
-  const view = viewFor(userId)
+function publish(key: string): void {
+  const view = viewFor(key)
   if (!view) return
-  const choice = choices.get(userId) ?? null
+  const choice = choices.get(key) ?? null
   const signature = `${view.shown}|${view.public}|${choice ?? ''}`
-  if (published.get(userId) === signature) return
-  published.set(userId, signature)
-  // Both chat keys, so a page loaded before migration 037 still matches its authors.
-  const keys = siteChatKeys(userId)
+  if (published.get(key) === signature) return
+  published.set(key, signature)
+  const keys = [key]
   broadcastEphemeral(DISCORD_BRIDGE_OWNER_KEY, 'bridge.presence', { keys, status: view.public })
   broadcastEphemeral(DISCORD_BRIDGE_OWNER_KEY, 'bridge.presence.self', { keys, shown: view.shown, choice })
 }
@@ -126,63 +124,67 @@ function startSweep(): void {
   // Idle transitions happen with time, not with socket events: re-derive every
   // connected account periodically and publish only what changed.
   sweepTimer = setInterval(() => {
-    for (const userId of [...connected.keys()]) publish(userId)
+    for (const key of [...connected.keys()]) publish(key)
   }, SWEEP_MS)
   sweepTimer.unref?.()
 }
 
 /** A realtime socket for a signed-in account opened. Resolves once published. */
-export async function presenceAttach(userId: number, socket: object): Promise<void> {
-  let entry = connected.get(userId)
+export async function presenceAttach(key: string, socket: object): Promise<void> {
+  let entry = connected.get(key)
   if (!entry) {
     entry = { sockets: new Map() }
-    connected.set(userId, entry)
+    connected.set(key, entry)
   }
   entry.sockets.set(socket, Date.now())
   startSweep()
-  await loadChoice(userId)
-  publish(userId)
+  await loadChoice(key)
+  publish(key)
 }
 
 /** Input from the socket (client `activity` message), throttled client-side. */
-export function presenceTouch(userId: number, socket: object): void {
-  const entry = connected.get(userId)
+export function presenceTouch(key: string, socket: object): void {
+  const entry = connected.get(key)
   if (!entry || !entry.sockets.has(socket)) return
   entry.sockets.set(socket, Date.now())
-  publish(userId)
+  publish(key)
 }
 
-export function presenceDetach(userId: number, socket: object): void {
-  const entry = connected.get(userId)
+export function presenceDetach(key: string, socket: object): void {
+  const entry = connected.get(key)
   if (!entry || !entry.sockets.delete(socket)) return
   if (entry.sockets.size === 0) {
-    connected.delete(userId)
-    choices.delete(userId)
-    publish(userId)
-    published.delete(userId)
+    connected.delete(key)
+    choices.delete(key)
+    publish(key)
+    published.delete(key)
     return
   }
-  publish(userId)
+  publish(key)
 }
 
 /** Payload for a socket that just attached: its own shown state (sent directly). */
-export function presenceSelfPayload(userId: number): Record<string, unknown> | null {
-  const view = viewFor(userId)
+export function presenceSelfPayload(key: string): Record<string, unknown> | null {
+  const view = viewFor(key)
   if (!view) return null
-  return { keys: siteChatKeys(userId), shown: view.shown, choice: choices.get(userId) ?? null }
+  return { keys: [key], shown: view.shown, choice: choices.get(key) ?? null }
 }
 
 /** Public status for another account (HTTP lookups). Unknown -> offline. */
-export function presencePublicFor(userId: number): PublicPresence {
-  return viewFor(userId)?.public ?? 'offline'
+export function presencePublicFor(key: string): PublicPresence {
+  return viewFor(key)?.public ?? 'offline'
 }
 
 /** Persist the owner's choice and re-publish. */
-export async function setPresenceChoice(userId: number, choice: PresenceChoice): Promise<PresenceView> {
-  await query('UPDATE users SET presence_status = $2 WHERE id = $1', [userId, choice])
-  if (connected.has(userId)) {
-    choices.set(userId, choice)
-    publish(userId)
+export async function setPresenceChoice(key: string, choice: PresenceChoice): Promise<PresenceView> {
+  await query(
+    `INSERT INTO chat_presence (key, status) VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET status = EXCLUDED.status, updated = NOW()`,
+    [key, choice],
+  )
+  if (connected.has(key)) {
+    choices.set(key, choice)
+    publish(key)
   }
-  return viewFor(userId) ?? derivePresence({ choice, sockets: 0, lastActiveAt: null, now: Date.now() })
+  return viewFor(key) ?? derivePresence({ choice, sockets: 0, lastActiveAt: null, now: Date.now() })
 }

@@ -1,29 +1,23 @@
-# Vendored from abulxt
+# Where holt's code came from
 
-Vendored from abulxt commit `60d67f0424bd237b46a64ce6c7357e74a1db431b`
+holt began as abulxt's community chatbox and was split out into its own service in October 2026. Until the
+standalone cutover (2026-10-24), part of it was copied byte-for-byte from the abulxt repo by a vendoring script.
+That is over: **holt owns every file in this repository.** Change them here; nothing is synced from abulxt.
 
-holt reuses abulxt's client-protection pipeline unchanged: the shield VM (every chunk compiled to
-encrypted bytecode), the post-build string obfuscator, the canary guardrail, the dist reference
-verifier, and the HolyText family. The files listed in `scripts/vendor-manifest.json` sit at the
-same path in both repos and stay byte-identical.
+What came from abulxt, for orientation:
 
-- **Change abulxt first, then pull.** Never patch a vendored file in holt alone.
-  `node scripts/vendor-sync.mjs --pull` copies them from `ABULXT_DIR` (default `../abulxt`) and
-  records the commit above. `--check` fails when a copy differs; `make check` runs it.
-- **holt owns** the files that only borrow abulxt's shape: `scripts/canary-list.json` (holt's own
-  canaries), `main/src/server/obfuscation-strings.ts` (holt's string list), and
-  `main/src/lib/config.ts` (the two functions `holy-decrypt.ts` imports).
-- **Names stay abulxt's.** The vendored code reads `window.__ABULXT_EC_KEY__`,
-  `__ABULXT_STRINGS__` and `#eckey`. Renaming them would fork the copies, so holt keeps them.
-- The rules in abulxt's AGENTS.md "Obfuscation and security" apply here as written: compile mode
-  only (`SHIELD_MODE=manifest` is a local debug opt-out, never committed), every build passes the
-  obfuscator then the canary check (exit 2 on a hit, no opt-out), every user-visible string is
-  wrapped (see `main/src/components/common/HOLYTEXT.md`).
+- **The client-protection pipeline**: the shield VM (every chunk compiled to encrypted bytecode), the post-build
+  string obfuscator, the canary guardrail, the dist reference verifier, and the HolyText family
+  (`main/src/server/shield/`, `main/src/lib/holy-*`, `main/src/components/common/Holy*`, `scripts/*.mjs`). The
+  rules stay the same as abulxt's: compile mode only (`SHIELD_MODE=manifest` is a local debug opt-out, never
+  committed), every build passes the obfuscator then the canary check (exit 2 on a hit, no opt-out), every
+  user-visible string is wrapped (`main/src/components/common/HOLYTEXT.md`). Some names are still abulxt's
+  (`window.__ABULXT_EC_KEY__`, `__ABULXT_STRINGS__`, `#eckey`, `abulxt:` localStorage prefixes); they are just
+  names.
+- **The chatbox** (`main/src/pages/chat/`, the `main/src/lib/` modules it uses, `main/public/vendor/discord/`,
+  `main/public/fonts/`).
+- **The chat server**: the bridge API, permissions, onboarding, events, the Discord bot's bridge. Everything that
+  read abulxt's accounts was rewritten around holt's identity directory (`chat_identity`) and platform sign-in.
 
-## What holt owns outright
-
-The chat API moved to holt on 2026-10-24 and was deleted from abulxt: `discord-bridge-api.ts`,
-`discord-onboarding-api.ts`, `discord-unfurl.ts`, `discord-author-style.ts`, `discord-cdn-refresh.ts`,
-`discord-embed-suppress.ts`, `discord-guild-tag.ts`, `discord-mention-limits.ts`. Change them here. The
-modules they import that abulxt still uses (database, events, permissions, channel access, presence)
-stay vendored: change those in abulxt first.
+abulxt's own Discord features (verification, account roles, `/links`, `/ai`, deletion requests) went back to
+abulxt; holt relays them over the platform hook (`discord-platform-relay.ts`).

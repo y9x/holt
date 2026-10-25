@@ -54,29 +54,24 @@ export function clampTimeoutSeconds(raw: unknown): number {
 }
 
 // The event fields that name the target. `target` is the canonical key
-// (site key when there is a site account); `targetKeys` lists every key the
+// (the web identity key when there is one); `targetKeys` lists every key the
 // identity appears under so the rt filter and clients match linked accounts
 // on either side.
 export function targetEventFields(target: WebhookIdentity): Record<string, unknown> {
   return {
     target: webhookKey(target),
     targetKeys: webhookKeys(target),
-    targetUserId: target.userId,
     targetDiscordId: target.discordId,
     targetName: target.name,
   }
 }
 
-// The bridge-ban rows that cover one webhook identity: the site account
-// ('user' = site user id) and its Discord side ('discord'). A linked account
-// is banned/unbanned on both, so the bot also removes its Discord-side posts
+// The bridge-ban rows that cover one webhook identity: its web identity ('ext') and its Discord side
+// ('discord'). A linked account is banned/unbanned on both, so the bot also removes its Discord-side posts
 // and the ban survives a later link/unlink. Pure (unit-tested).
-export function banSubjects(subject: WebhookSubject): Array<{ subjectType: 'user' | 'discord' | 'ext'; subject: string }> {
-  const rows: Array<{ subjectType: 'user' | 'discord' | 'ext'; subject: string }> = []
-  if (subject.userId !== null) rows.push({ subjectType: 'user', subject: String(subject.userId) })
+export function banSubjects(subject: WebhookSubject): Array<{ subjectType: 'discord' | 'ext'; subject: string }> {
+  const rows: Array<{ subjectType: 'discord' | 'ext'; subject: string }> = []
   if (subject.discordId) rows.push({ subjectType: 'discord', subject: subject.discordId })
-  // Another platform's identity (holt): checked like the others, so an ext-only identity is never
-  // "not banned" by omission. Writing an 'ext' ban needs the CHECK widened (holt phase 1 step 3).
   if (subject.extKey) rows.push({ subjectType: 'ext', subject: subject.extKey })
   return rows
 }
@@ -209,7 +204,6 @@ export async function moderateWebhook(
   // and their composer re-fetches perms.
   await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.perms.changed', {
     discordId: target.discordId,
-    userId: target.userId,
     keys: webhookKeys(target),
     channelId,
     guildId,

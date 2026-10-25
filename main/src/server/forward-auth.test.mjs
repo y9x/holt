@@ -8,7 +8,10 @@ import http from 'node:http'
 import { clearUserStateCache, forwardedCookies, principalFromPlatform, UserStateUnavailable } from './forward-auth.ts'
 import { parsePlatforms } from './platforms.ts'
 
-const USERS = { s_good: { id: 77, username: 'Night Owl', email_verified: true, avatar: 'https://cdn.example/a.webp' } }
+const USERS = {
+  s_good: { id: 77, username: 'Night Owl', email_verified: true, avatar: 'https://cdn.example/a.webp' },
+  s_linked: { id: 78, username: 'owl', chatName: 'The Owl', email_verified: true, admin: true, avatar: 'https://cdn.example/b.webp', discord: { id: '1310751771840217119' } },
+}
 let calls = 0
 let mode = 'normal'
 let lastCookie = ''
@@ -30,15 +33,15 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const base = `http://127.0.0.1:${server.address().port}`
 test.after(() => server.close())
 
-function platform(userState) {
-  return parsePlatforms([{ id: 'partner', name: 'Partner', allowedOrigins: ['https://partner.example'], links: { account: 'https://partner.example/a', settings: 'https://partner.example/s' }, userState }])[0]
+function platform(userState, extra = {}) {
+  return parsePlatforms([{ id: 'partner', name: 'Partner', allowedOrigins: ['https://partner.example'], links: { account: 'https://partner.example/a', settings: 'https://partner.example/s' }, userState, ...extra }])[0]
 }
 
 test.beforeEach(() => { clearUserStateCache(); calls = 0; mode = 'normal' })
 
 test('signed-in cookies become a namespaced principal; numeric ids are kept as strings', async () => {
   const p = platform({ url: `${base}/chat/api/me` })
-  assert.deepEqual(await principalFromPlatform(p, 'sid=s_good; theme=dark'), { key: 'partner:77', platformId: 'partner', name: 'Night Owl', emailVerified: true, avatar: 'https://cdn.example/a.webp', tier: null })
+  assert.deepEqual(await principalFromPlatform(p, 'sid=s_good; theme=dark'), { key: 'partner:77', platformId: 'partner', name: 'Night Owl', emailVerified: true, avatar: null, tier: null }, 'a partner\'s avatar is never used')
 })
 
 test('no cookies, unknown cookies, or a 401 mean signed out', async () => {
@@ -99,9 +102,11 @@ test('custom field names reach into nested answers', async () => {
 test('config: proxy-only platforms need no secret; reserved ids and bad field names are refused', () => {
   const p = platform({ url: 'https://partner.example/chat/api/me' })
   assert.equal(p.secret, null)
-  assert.deepEqual(p.userState.fields, { id: 'id', name: 'username', emailVerified: 'email_verified', avatar: 'avatar' })
+  assert.deepEqual(p.userState.fields, { id: 'id', name: 'username', emailVerified: 'email_verified', avatar: 'avatar', discordId: null, admin: null, displayName: null })
   const bad = (overrides, re) => assert.throws(() => parsePlatforms([{ id: 'partner', name: 'P', allowedOrigins: ['https://partner.example'], links: { account: 'https://partner.example/a', settings: 'https://partner.example/s' }, ...overrides }]), re)
   bad({}, /needs userState/)
+  bad({ userState: { url: 'https://partner.example/me', fields: { discordId: 'discord.id' } } }, /need trusted: true/)
+  bad({ userState: { url: 'https://partner.example/me', fields: { admin: 'admin' } } }, /need trusted: true/)
   bad({ id: 'assets', userState: { url: 'https://p.example/me' } }, /reserved/)
   bad({ userState: { url: 'http://partner.example/me' } }, /userState.url must be https/)
   bad({ userState: { url: 'https://p.example/me', fields: { id: 'a b' } } }, /not a field name/)
@@ -191,4 +196,13 @@ test('config: token headers that could redirect a visitor token are refused', ()
     assert.throws(() => platform({ url: 'https://partner.example/me', tokenStorageKey: 'k', tokenHeader: bad }), /tokenHeader/, bad)
   }
   assert.deepEqual(platform({ url: 'https://partner.example/me', tokenStorageKey: 'k' }).userState.tokenHeader, { name: 'authorization', bearer: true })
+})
+
+test('a trusted platform vouches for a linked Discord account, site admin, display name and avatar', async () => {
+  const fields = { id: 'id', name: 'username', emailVerified: 'email_verified', avatar: 'avatar', discordId: 'discord.id', admin: 'admin', displayName: 'chatName' }
+  const trusted = platform({ url: `${base}/chat/api/me`, fields }, { trusted: true })
+  assert.deepEqual(await principalFromPlatform(trusted, 'sid=s_linked'), {
+    key: 'partner:78', platformId: 'partner', name: 'The Owl', emailVerified: true, avatar: 'https://cdn.example/b.webp', tier: null,
+    discordId: '1310751771840217119', admin: true,
+  })
 })

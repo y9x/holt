@@ -1,8 +1,7 @@
 import { query, getPool } from './db.js'
-import { sameOriginAvatarUrl } from './avatar-store.js'
 import { emit, DISCORD_BRIDGE_OWNER_KEY } from './events.js'
 import type { BridgeInteraction } from './discord-interactions.js'
-import { siteChatKeys } from './chat-identity-key.ts'
+import { webIdentityKey } from './chat-identity-key.ts'
 
 export interface BridgeChannel {
   id: number
@@ -286,7 +285,7 @@ export function toMessage(row: MessageRow): BridgeMessage {
     ...(row.discord_message_id !== null && row.discord_message_id === row.channel_id ? { starter: true } : {}),
     authorKey: row.author_key,
     authorName: row.author_name,
-    authorAvatar: sameOriginAvatarUrl(row.author_avatar),
+    authorAvatar: row.author_avatar,
     authorColor: row.author_color,
     authorRole: row.author_role ?? null,
     authorBot: row.author_bot === true,
@@ -1400,18 +1399,16 @@ const HAS_SQL: Record<SearchHas, string> = {
 // --- Typed from:/mentions: names ---------------------------------------------
 // A name the client couldn't resolve to an id (typed, not picked from the
 // suggestions) is resolved here, Discord-style: case-insensitive EXACT
-// username first (Discord username in the guild member directory, site
-// username); only when no username matches, exact display name (guild
-// display name = nick/global name, web chat display name, or a stored
-// message author name in the searched channels - covers ex-members). Every
-// match becomes ONE webhook identity: a linked site account and its Discord
-// account are searched together (`user:<id>` + `discord:<id>` author keys).
+// username first (Discord username in the guild member directory); only when no username matches, exact
+// display name (guild display name = nick/global name, a web identity's name in holt's identity directory, or
+// a stored message author name in the searched channels - covers ex-members). Every match becomes ONE webhook
+// identity: a web identity and the Discord account its trusted platform linked are searched together.
 
 export const SEARCH_NAME_MATCH_CAP = 10 // identities per typed name
 
 export interface SearchNameCandidate {
   discordId: string | null
-  siteId: string | null
+  webKey: string | null
   usernames: string[]       // lowercased
   displayNames: string[]    // lowercased
 }
@@ -1427,21 +1424,21 @@ export function pickNameMatches(name: string, candidates: SearchNameCandidate[])
 
 /** Pure: matched candidates (+ site↔Discord links) → author keys / Discord ids. */
 export function expandSearchIdentities(
-  matches: Array<Pick<SearchNameCandidate, 'discordId' | 'siteId'>>,
-  links: Array<{ siteId: string; discordId: string }>,
+  matches: Array<Pick<SearchNameCandidate, 'discordId' | 'webKey'>>,
+  links: Array<{ webKey: string; discordId: string }>,
 ): { authorKeys: string[]; discordIds: string[] } {
   const discordIds = new Set<string>()
-  const siteIds = new Set<string>()
+  const webKeys = new Set<string>()
   for (const m of matches) {
     if (m.discordId) discordIds.add(m.discordId)
-    if (m.siteId) siteIds.add(m.siteId)
+    if (m.webKey) webKeys.add(m.webKey)
   }
   for (const l of links) {
-    if (discordIds.has(l.discordId)) siteIds.add(l.siteId)
-    if (siteIds.has(l.siteId)) discordIds.add(l.discordId)
+    if (discordIds.has(l.discordId)) webKeys.add(l.webKey)
+    if (webKeys.has(l.webKey)) discordIds.add(l.discordId)
   }
   return {
-    authorKeys: [...[...discordIds].map((id) => `discord:${id}`), ...[...siteIds].flatMap((id) => siteChatKeys(Number(id)))],
+    authorKeys: [...[...discordIds].map((id) => `discord:${id}`), ...webKeys],
     discordIds: [...discordIds],
   }
 }
@@ -1460,15 +1457,13 @@ async function searchNameCandidates(db: Queryable, names: string[], guildIds: st
        LIMIT 200`,
       [guildIds, names],
     )
-    for (const r of members.rows) out.push({ discordId: r.user_id, siteId: null, usernames: lower(r.username), displayNames: lower(r.display_name) })
+    for (const r of members.rows) out.push({ discordId: r.user_id, webKey: null, usernames: lower(r.username), displayNames: lower(r.display_name) })
   }
-  const users = await db.query<{ id: string; username: string; chat_display_name: string | null; discord_id: string | null }>(
-    `SELECT id::text AS id, username, chat_display_name, discord_id FROM users
-     WHERE lower(username) = ANY($1::text[]) OR lower(chat_display_name) = ANY($1::text[])
-     LIMIT 200`,
+  const identities = await db.query<{ key: string; name: string; discord_id: string | null }>(
+    `SELECT key, name, discord_id FROM chat_identity WHERE lower(name) = ANY($1::text[]) LIMIT 200`,
     [names],
   )
-  for (const r of users.rows) out.push({ discordId: r.discord_id || null, siteId: r.id, usernames: lower(r.username), displayNames: lower(r.chat_display_name) })
+  for (const r of identities.rows) out.push({ discordId: r.discord_id || null, webKey: r.key, usernames: [], displayNames: lower(r.name) })
   // Stored author names (display names) - only for names no username matched,
   // so the message scan is skipped in the common case.
   const unmatched = names.filter((n) => !out.some((c) => c.usernames.includes(n)))
@@ -1480,22 +1475,23 @@ async function searchNameCandidates(db: Queryable, names: string[], guildIds: st
       [channelIds, unmatched],
     )
     for (const r of authors.rows) {
-      const m = /^(discord|user):(\d+)$/.exec(r.author_key)
-      if (!m) continue
-      out.push({ discordId: m[1] === 'discord' ? m[2] : null, siteId: m[1] === 'user' ? m[2] : null, usernames: [], displayNames: lower(r.author_name) })
+      const discord = /^discord:(\d{15,22})$/.exec(r.author_key)
+      const web = discord ? null : webIdentityKey(r.author_key)
+      if (!discord && !web) continue
+      out.push({ discordId: discord ? discord[1] : null, webKey: web, usernames: [], displayNames: lower(r.author_name) })
     }
   }
   return out
 }
 
-async function searchIdentityLinks(db: Queryable, discordIds: string[], siteIds: string[]): Promise<Array<{ siteId: string; discordId: string }>> {
-  if (!discordIds.length && !siteIds.length) return []
-  const { rows } = await db.query<{ id: string; discord_id: string }>(
-    `SELECT id::text AS id, discord_id FROM users
-     WHERE discord_id IS NOT NULL AND (discord_id = ANY($1::text[]) OR id::text = ANY($2::text[]))`,
-    [discordIds, siteIds],
+async function searchIdentityLinks(db: Queryable, discordIds: string[], webKeys: string[]): Promise<Array<{ webKey: string; discordId: string }>> {
+  if (!discordIds.length && !webKeys.length) return []
+  const { rows } = await db.query<{ key: string; discord_id: string }>(
+    `SELECT key, discord_id FROM chat_identity
+     WHERE discord_id IS NOT NULL AND (discord_id = ANY($1::text[]) OR key = ANY($2::text[]))`,
+    [discordIds, webKeys],
   )
-  return rows.map((r) => ({ siteId: r.id, discordId: r.discord_id }))
+  return rows.map((r) => ({ webKey: r.key, discordId: r.discord_id }))
 }
 
 /** from:/mentions: (ids + typed names) → author keys and per-mention Discord id groups.
@@ -1504,7 +1500,7 @@ async function resolveSearchPeople(db: Queryable, f: SearchFilters): Promise<{ a
   const names = [...new Set([...f.authorNames, ...f.mentionNames])]
   const candidates = await searchNameCandidates(db, names, f.guildIds, f.channelIds)
   const fromMatches = [
-    ...f.authorIds.map((id) => ({ discordId: id, siteId: null })),
+    ...f.authorIds.map((id) => ({ discordId: id, webKey: null })),
     ...f.authorNames.flatMap((n) => pickNameMatches(n, candidates)),
   ]
   const mentionMatches = f.mentionNames.map((n) => pickNameMatches(n, candidates))
@@ -1512,7 +1508,7 @@ async function resolveSearchPeople(db: Queryable, f: SearchFilters): Promise<{ a
   const links = await searchIdentityLinks(
     db,
     all.flatMap((m) => (m.discordId ? [m.discordId] : [])),
-    all.flatMap((m) => (m.siteId ? [m.siteId] : [])),
+    all.flatMap((m) => (m.webKey ? [m.webKey] : [])),
   )
   const authorKeys = expandSearchIdentities(fromMatches, links).authorKeys
   if ((f.authorIds.length || f.authorNames.length) && !authorKeys.length) return null
@@ -2196,7 +2192,7 @@ export async function forumPostViews(posts: BridgePost[]): Promise<ForumPostView
       ownerKey: post.ownerKey,
       // An owner who left the guild has no directory entry; their starter message still carries the name.
       ownerName: post.ownerName || r?.s_author || '',
-      ownerAvatar: sameOriginAvatarUrl(post.ownerAvatar),
+      ownerAvatar: post.ownerAvatar,
       ownerColor: post.ownerColor,
       appliedTags: post.appliedTags,
       pinned: post.pinned,

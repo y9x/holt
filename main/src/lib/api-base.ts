@@ -1,14 +1,6 @@
-﻿// holt-owned stand-in for abulxt's lib/api-base.ts (VENDOR.md): same exports, holt's rules.
-//
-// abulxt's version picks one of several backend domains and fails over between them (static and CDN
-// builds). holt's chatbox is always served by the platform's own proxy, so its API is always one place:
-//
-// - a platform on abulxt accounts ('site'): the page's own origin. abulxt routes /api/discord/bridge/* to
-//   holt and keeps /api/rt and /api/auth itself.
-// - a platform with its own accounts ('holt'): under the page's `./_holt/` (`/chat/_holt/api/...`), which
-//   the platform's `/chat/` proxy rule already sends to holt. No extra rule on the partner's side.
-//
-// No failover: there is nothing to fail over to.
+// The chatbox's API base. The chat page is always served by the platform's own `/chat/` proxy, so its API is
+// always one place: the page's `./_holt/` (`/chat/_holt/api/...`), which the same proxy rule sends to holt.
+// No failover (abulxt's static builds rotate between backend domains; holt has nothing to rotate to).
 
 import { readPlatform } from '../embed/platform'
 
@@ -18,7 +10,7 @@ function holtBase(): string {
   if (cached !== null) return cached
   let base = ''
   try {
-    if (typeof document !== 'undefined' && readPlatform()?.api === 'holt') base = new URL('./_holt', document.baseURI).href.replace(/\/$/, '')
+    if (typeof document !== 'undefined' && readPlatform()) base = new URL('./_holt', document.baseURI).href.replace(/\/$/, '')
   } catch {
     base = ''
   }

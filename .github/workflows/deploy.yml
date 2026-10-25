@@ -8,7 +8,6 @@
 #                                /usr/local/sbin/holt-deploy-gate (rsync into /opt/holt + activate only).
 #   vars.HOLT_DEPLOY_HOST        amph's address. vars.HOLT_DEPLOY_KNOWN_HOSTS: its pinned host key line.
 #
-# Not run here: `make vendor-check`. It needs the private abulxt checkout next to holt; run it locally.
 
 name: Deploy
 

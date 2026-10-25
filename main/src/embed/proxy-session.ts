@@ -1,15 +1,14 @@
-// Sign-in for the chatbox on a platform with its own accounts (platform.api === 'holt').
+// Sign-in for the chatbox on every platform.
 //
 // The page asks holt (POST ./_holt/session) who is signed in on the platform: holt checks with the platform
 // itself (its cookies, or its localStorage token passed as `Authorization: Bearer`) and answers with a
-// short holt session. The chatbox's own client modules (vendored from abulxt) read their token from
-// `abulxt:auth-token`, so the session is kept under that key on this page's origin: every chat API call and
-// the realtime socket carry it, and holt-service turns it into the caller for the chat API.
+// short holt session, kept under `holt:session` on this page's origin (never the platform's own login key):
+// every chat API call and the realtime socket carry it, and holt-service turns it into the caller.
 //
 // Renewed every few minutes, when the tab comes back and when the platform's login changes in another tab,
 // so signing out on the platform signs the chatbox out too (within one renewal).
 
-const CHAT_TOKEN_KEY = 'abulxt:auth-token'
+const CHAT_TOKEN_KEY = 'holt:session'
 const RENEW_MS = 10 * 60_000
 const TOKEN_SHAPE = /^[A-Za-z0-9._~+/-]+=*$/
 

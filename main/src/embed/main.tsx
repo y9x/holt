@@ -27,8 +27,8 @@ loadDecryptionKey()
 const root = createRoot(document.getElementById('root')!)
 const platform = readPlatform()
 if (platform?.chat) seedHomeGuild(platform.homeGuild)
-// A platform with its own accounts: sign the chatbox in with the platform's login before it mounts.
-const ready = platform?.chat && platform.api === 'holt' ? startProxySession(platform.tokenStorageKey) : Promise.resolve()
+// Sign the chatbox in with the platform's own login before it mounts.
+const ready = platform?.chat ? startProxySession(platform.tokenStorageKey) : Promise.resolve()
 void ready.then(() => root.render(
   <StrictMode>
     {platform?.chat ? (

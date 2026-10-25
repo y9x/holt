@@ -29,7 +29,7 @@ export function getPool(): Pool {
   if (poolHolder.__abulxtPool) return poolHolder.__abulxtPool
   const connStr = resolvedConnectionString()
   if (!connStr) {
-    throw new Error('DATABASE_URL is not set. Point it at the abulxt Postgres (see .env.example).')
+    throw new Error('DATABASE_URL is not set. Point config.db.url at holt\'s Postgres database.')
   }
   const pool = new Pool({
     connectionString: connStr,
@@ -161,19 +161,16 @@ function isTransientDbError(error: unknown): boolean {
   )
 }
 
-export async function ensureSchema(dataDir?: string): Promise<boolean> {
+export async function ensureSchema(): Promise<boolean> {
   if (migrated) return true
   if (!dbConfigured()) return false
 
   let lastError: unknown
   // Disk-full / Postgres recovery can take a while. Retry longer on transient
-  // errors so abulxt-server does not crash-loop the whole site into 502s.
+  // errors so holt does not crash-loop the whole site into 502s.
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
       await applySchema()
-      await migrateLegacyAuthStore(dataDir)
-
-      await query('UPDATE thread SET generating = FALSE WHERE generating = TRUE').catch(() => {})
       migrated = true
       return true
     } catch (error) {
@@ -204,44 +201,4 @@ export async function ensureSchema(dataDir?: string): Promise<boolean> {
     lastError instanceof Error ? lastError.message : lastError,
   )
   return false
-}
-
-type LegacyUser = { username: string; salt: string; hash: string; createdAt: string }
-type LegacySession = { token: string; username: string; createdAt: string }
-
-async function migrateLegacyAuthStore(dataDir?: string): Promise<void> {
-  const dir = dataDir || path.resolve(process.cwd(), '.abulxt-data')
-  const storePath = path.join(dir, 'auth-store.json')
-  let raw: string
-  try {
-    raw = await fs.readFile(storePath, 'utf8')
-  } catch {
-    return
-  }
-  let parsed: { users?: LegacyUser[]; sessions?: LegacySession[] }
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    return
-  }
-  const users = Array.isArray(parsed.users) ? parsed.users : []
-  const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : []
-  for (const u of users) {
-    await query(
-      `INSERT INTO users (username, password_salt, password_hash, created)
-       VALUES ($1, $2, $3, COALESCE($4::timestamptz, NOW()))
-       ON CONFLICT (username) DO NOTHING`,
-      [u.username, u.salt, u.hash, u.createdAt || null],
-    )
-  }
-  for (const s of sessions) {
-    await query(
-      `INSERT INTO session (secret, created, user_id)
-       SELECT $1, COALESCE($3::timestamptz, NOW()), id FROM users WHERE lower(username) = lower($2)
-       ON CONFLICT (secret) DO NOTHING`,
-      [s.token, s.username, s.createdAt || null],
-    )
-  }
-
-  await fs.rename(storePath, `${storePath}.migrated`).catch(() => {})
 }

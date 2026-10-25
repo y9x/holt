@@ -20,11 +20,6 @@ export interface EmbedPlatform {
   chat: boolean
   /** The guild this site's chatbox opens on first, or null. */
   homeGuild: string | null
-  /**
-   * Where the chatbox's API lives. 'site': the page's own origin (abulxt accounts: abulxt routes the chat
-   * API to holt). 'holt': under this page's `./_holt/` (a platform with its own accounts).
-   */
-  api: 'site' | 'holt'
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -42,7 +37,7 @@ export function readPlatform(): EmbedPlatform | null {
     return null
   }
   if (typeof raw !== 'object' || raw === null) return null
-  const { id, name, mode, origins, links, tokenStorageKey, chat, homeGuild, api } = raw as Record<string, unknown>
+  const { id, name, mode, origins, links, tokenStorageKey, chat, homeGuild } = raw as Record<string, unknown>
   if (typeof id !== 'string' || typeof name !== 'string' || !Array.isArray(origins)) return null
   const linkObject = (typeof links === 'object' && links !== null ? links : {}) as Record<string, unknown>
   return {
@@ -59,6 +54,5 @@ export function readPlatform(): EmbedPlatform | null {
     tokenStorageKey: mode === 'proxy' && typeof tokenStorageKey === 'string' && tokenStorageKey ? tokenStorageKey : null,
     chat: mode === 'proxy' && chat === true,
     homeGuild: typeof homeGuild === 'string' && /^\d{15,22}$/.test(homeGuild) ? homeGuild : null,
-    api: api === 'holt' ? 'holt' : 'site',
   }
 }

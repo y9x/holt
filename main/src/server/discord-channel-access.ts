@@ -27,7 +27,7 @@ import {
   type OnboardingConfig,
   type OnboardingStateRow,
 } from './discord-onboarding.js'
-import { chatKeyOfUser, siteChatKey, siteChatKeys, siteIdOfChatKey, type ChatSubjectUser } from './chat-identity-key.ts'
+import { chatKeyOfUser, webIdentityKey, type ChatSubjectUser } from './chat-identity-key.ts'
 
 // Discord-side channel visibility for the web chatbox, per bridged guild
 // (every function takes the guild the channel / perms belong to).
@@ -484,11 +484,7 @@ export async function discordChannelBits(
 
 // --- Server Onboarding (emulated) ---------------------------------------------
 
-export function onboardingIdentityKey(userId: number): string {
-  return siteChatKey(userId)
-}
-
-// `key` = the caller's chat identity key (chatKeyOfUser): a site account or another platform's identity.
+// `key` = the caller's chat identity key (chatKeyOfUser).
 async function onboardingRolesFor(key: string | null, guildId: string): Promise<string[]> {
   if (key === null) return []
   const snap = guildId ? await guildSnapshot(guildId) : null
@@ -499,10 +495,9 @@ async function onboardingRolesFor(key: string | null, guildId: string): Promise<
   return emulatedRoleIds(config, row.responses, snap.roles)
 }
 
-// Site account ids whose Server Onboarding answers grant `roleId` (the
-// role-mention popout lists them as webhook holders). Only options whose
-// emulated roles include it count, so elevated/managed roles never match.
-export async function onboardingRoleHolders(guildId: string, roleId: string, limit = 500): Promise<number[]> {
+// Web identity keys whose Server Onboarding answers grant `roleId` (the role-mention popout lists them as
+// webhook holders). Only options whose emulated roles include it count, so elevated/managed roles never match.
+export async function onboardingRoleHolders(guildId: string, roleId: string, limit = 500): Promise<string[]> {
   const snap = guildId ? await guildSnapshot(guildId) : null
   if (!snap) return []
   const config = await onboardingConfig(guildId, { roles: snap.roles, channels: snap.byId }).catch(() => null)
@@ -513,11 +508,11 @@ export async function onboardingRoleHolders(guildId: string, roleId: string, lim
   if (!optionIds.length) return []
   const { rows } = await query<{ identity_key: string }>(
     `SELECT identity_key FROM discord_bridge_onboarding_state
-     WHERE guild_id = $1 AND (identity_key LIKE 'abulxt:%' OR identity_key LIKE 'user:%') AND responses && $2::text[]
+     WHERE guild_id = $1 AND responses && $2::text[]
      LIMIT $3`,
     [guildId, optionIds, limit],
   ).catch(() => ({ rows: [] as Array<{ identity_key: string }> }))
-  return rows.map((r) => siteIdOfChatKey(r.identity_key)).filter((id): id is number => id !== null)
+  return rows.map((r) => webIdentityKey(r.identity_key)).filter((key): key is string => key !== null)
 }
 
 export interface OnboardingView {
@@ -1032,7 +1027,6 @@ export function invalidateVisibilityForEvent(seq: number, payload: Record<string
     return
   }
   const keys = Array.isArray(payload.keys) ? payload.keys.filter((k): k is string => typeof k === 'string') : []
-  if (typeof payload.userId === 'number') keys.push(...siteChatKeys(payload.userId), `user:${payload.userId}`)
   for (const key of keys) {
     visibilityCache.delete(key)
     if (key.startsWith('discord:')) forgetMemberRoles(key.slice('discord:'.length))
@@ -1063,7 +1057,7 @@ function eventChannelId(payload: Record<string, unknown>): string | null {
 // Does a targeted bridge event name this identity? Moderation events carry
 // `targetKeys` (every key of the target webhook; legacy events only a raw
 // Discord id in `target`); perms.changed events carry `keys` and/or
-// `discordId` / `userId`. Pure.
+// `discordId`. Pure.
 export function eventTargetsIdentity(
   payload: Record<string, unknown>,
   identity: { keys: string[]; discordId: string | null },
@@ -1073,16 +1067,13 @@ export function eventTargetsIdentity(
   const target = typeof payload.target === 'string' ? payload.target : null
   if (target && (identity.keys.includes(target) || (identity.discordId !== null && target === identity.discordId))) return true
   const discordId = typeof payload.discordId === 'string' ? payload.discordId : null
-  if (discordId && discordId === identity.discordId) return true
-  const userId = typeof payload.userId === 'number' ? payload.userId : null
-  return userId !== null && siteChatKeys(userId).some((key) => identity.keys.includes(key))
+  return Boolean(discordId && discordId === identity.discordId)
 }
 
 // A perms.changed event with no target at all is global (chat-role
 // definitions changed).
 export function isGlobalPermsEvent(payload: Record<string, unknown>): boolean {
   return !(typeof payload.discordId === 'string' && payload.discordId)
-    && typeof payload.userId !== 'number'
     && !(Array.isArray(payload.keys) && payload.keys.length)
 }
 
@@ -1118,6 +1109,7 @@ export function allowBridgeEvent(event: { type: string; payload: Record<string, 
     // sockets get the public status only while they share a guild context
     // (can view some channel). Never the owner's invisible choice.
     case 'bridge.presence.self':
+    case 'account.guild_folders':
       return eventTargetsIdentity(payload, vis)
     case 'bridge.presence':
       return vis.channels.size > 0 && !eventTargetsIdentity(payload, vis)

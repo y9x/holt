@@ -1,6 +1,8 @@
+// Who a request comes from, network-wise. holt has no accounts of its own: the caller's identity is the
+// principal holt-service verified with the caller's platform (chat-caller.ts). This module only reads the
+// client address the platform's proxy forwarded, for rate limits and IP bans.
+
 import type { IncomingMessage } from 'node:http'
-import { resolveAuthUser, type DbUser } from './auth-db-api.js'
-import { clientGeo } from './traffic-log.js'
 
 export function clientIp(request: IncomingMessage): string {
   const cf = request.headers['cf-connecting-ip']
@@ -16,26 +18,4 @@ export function clientIp(request: IncomingMessage): string {
 
 export function guestOwnerKey(ip: string): string {
   return `guest:${ip}`
-}
-
-export function userOwnerKey(userId: number): string {
-  return `user:${userId}`
-}
-
-export interface Identity {
-  ownerKey: string
-  user: DbUser | null
-  isGuest: boolean
-  ip: string
-  country?: string
-  city?: string
-  region?: string
-}
-
-export async function resolveIdentity(request: IncomingMessage): Promise<Identity> {
-  const user = await resolveAuthUser(request)
-  const ip = clientIp(request)
-  const geo = clientGeo(request)
-  if (user) return { ownerKey: userOwnerKey(user.id), user, isGuest: false, ip, ...geo }
-  return { ownerKey: guestOwnerKey(ip), user: null, isGuest: true, ip, ...geo }
 }

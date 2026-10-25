@@ -28,6 +28,12 @@ export interface Principal {
   emailVerified: boolean
   avatar: string | null
   tier: string | null
+  /**
+   * Vouched for by a trusted platform only (platforms.ts `trusted`), never from an identity token: the
+   * user's linked Discord account (they chat with that member's real roles) and site-admin status.
+   */
+  discordId?: string | null
+  admin?: boolean
 }
 
 export class IdentityTokenError extends Error {}

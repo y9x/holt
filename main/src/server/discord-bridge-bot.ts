@@ -36,7 +36,6 @@ import {
   resolveBridgedChannels,
   type LayoutEntry,
 } from './discord-bridge-categories.js'
-import { absoluteAvatarUrl, isApprovedSha, shaFromAvatarUrl } from './avatar-store.js'
 import { componentsFromRaw, interactionFromRaw, MessageFlag } from './discord-interactions.js'
 import { bridgeTargets, inExpectedGuild } from './bridge-config.ts'
 import { planActivePosts, planArchivedPage, postsToTombstone, resolveForumBackfill } from './discord-forum-sync.ts'
@@ -948,11 +947,9 @@ async function deliverWebMessageOnce(id: number): Promise<void> {
     const allowedMentions = allowedMentionsFromStored(row.mentions, Boolean(replyMessageId) && row.reply_mention !== false)
     const username = row.author_name.slice(0, 80)
     const content = row.forwarded ? forwardContent(row.forwarded) : row.content
-    // An uploaded avatar is only handed to Discord while it is still
-    // APPROVED (a moderator may have rejected/removed it after the send).
-    const ownAvatarSha = shaFromAvatarUrl(row.author_avatar)
-    const avatarOk = !ownAvatarSha || (await isApprovedSha(ownAvatarSha).catch(() => false))
-    const avatarURL = (avatarOk && (await absoluteAvatarUrl(row.author_avatar).catch(() => null))) || `${discordCdn}/embed/avatars/0.png`
+    // The avatar a trusted platform vouched for (an absolute https URL it serves only while the avatar is
+    // approved there), else Discord's default.
+    const avatarURL = row.author_avatar && /^https:\/\//.test(row.author_avatar) ? row.author_avatar : `${discordCdn}/embed/avatars/0.png`
     let sentId: string
     let sentChannelId: string | null = null
     let sentEmbeds: Record<string, unknown>[] = []

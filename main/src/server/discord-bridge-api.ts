@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, ViteDevServer } from 'vite'
 import { dbConfigured, ensureSchema, query } from './db.js'
-import { absolutizeSiteAvatars, FOREIGN_PAGE_HEADER, isExtUser, resolveChatIdentity, siteOriginOf, type ChatUser } from './chat-caller.ts'
+import { resolveChatIdentity, type ChatUser } from './chat-caller.ts'
 import { effectiveChatName } from './chat-display-name.js'
 import { parseRequestUrl } from './request-url.ts'
 import { rateLimit, sendRateLimited } from './rate-limit.ts'
@@ -22,7 +22,6 @@ import {
   chatPermsForUser,
   chatPermsForChannel,
   chatPermsForIdentity,
-  extKeyOf,
   activeTimeout,
   webhookOverwrites,
   memberOverwrite,
@@ -59,9 +58,9 @@ import { discordFetch, fetchMemberProfile } from './discord-roles.js'
 import { writeSealedJson } from './api-crypto.ts'
 import { authorStyleFor, authorStylesFor, roleColorsFor, webAuthorStyle, type AuthorStyle } from './discord-author-style.js'
 import { guildTagProfile } from './discord-guild-tag.js'
-import { approvedAvatarUrlForUser } from './avatar-store.ts'
+import { identityByKey } from './identity-directory.ts'
 import { handleOnboardingRequest, isOnboardingRoute } from './discord-onboarding-api.js'
-import { siteChatKey, siteChatKeys, siteIdOfChatKey } from './chat-identity-key.ts'
+import { webIdentityKey } from './chat-identity-key.ts'
 import { bridgeTargets } from './bridge-config.ts'
 import {
   channelAccess,
@@ -566,32 +565,20 @@ function neutralizedReason(list: Array<{ target: string; reason: NeutralizeReaso
 
 // Bridge ban for a signed-in caller (site user, linked Discord id, or IP) in
 // one guild: global bans plus that guild's own. Returns the reason or null.
-// The caller's chat key: `abulxt:<id>` for a site account, the ext key (`<namespace>:<subject>`) for
-// another platform's user (chat-caller.ts).
+// The caller's chat key (`<namespace>:<subject>`, chat-caller.ts).
 function callerKey(user: ChatUser): string {
-  return isExtUser(user) ? user.ext_key : siteChatKey(user.id)
+  return user.ext_key
 }
 
-// Every key the caller's own messages may carry (a site account also has its pre-037 key).
-function callerKeys(user: ChatUser): string[] {
-  return isExtUser(user) ? [user.ext_key] : siteChatKeys(user.id)
-}
-
-// Did the caller write this web message? Compared by key: two other-platform users have no site id, so an
-// id comparison would make every one of them the author of every other's messages.
+// Did the caller write this web message? Compared by key.
 function authoredBy(authorKey: string, user: ChatUser | null | undefined): boolean {
-  if (!user) return false
-  return isExtUser(user) ? authorKey === user.ext_key : siteIdOfChatKey(authorKey) === user.id
+  return Boolean(user) && webIdentityKey(authorKey) === user!.ext_key
 }
 
-// The avatar a web message carries: a site account's approved upload, else its linked Discord avatar.
-// Another platform's user gets Discord's default: holt has no moderation path for avatar URLs a platform
-// supplies, and only moderated avatars are ever shown or sent to Discord.
-async function callerAvatar(user: ChatUser): Promise<string | null> {
-  if (isExtUser(user)) return null
-  return (await approvedAvatarUrlForUser(user.id)) ?? (user.discord_avatar
-    ? `https://cdn.discordapp.com/avatars/${user.discord_id}/${user.discord_avatar}.webp?size=64`
-    : null)
+// The avatar a web message carries: the one a trusted platform vouched for (it moderates its own uploads),
+// else none (Discord's default). Partners' avatars are never forwarded (forward-auth.ts).
+function callerAvatar(user: ChatUser): string | null {
+  return user.avatar
 }
 
 // holt's sessionSecret (holt-config.ts): verifies the X-Holt-Principal holt-service signs for other
@@ -821,24 +808,19 @@ function pinnedToBridgeMessage(m: DiscordApiMessage, channelId: string): bridge.
 
 // --- Web (webhook) identities: effective roles for display ------------------
 //
-// A web identity (`user:<siteId>`) shows the roles it EFFECTIVELY holds -
-// chatPermsForIdentity's roleIds (tier/perk chat roles ∪ onboarding grants, or
-// a linked member's real roles) - exactly like Discord member roles: profile
-// role pills, name color (incl. gradient role colors), role-mention popout
-// membership. Only site-side data is served (username, approved avatar, site
-// join date): never a Discord id, Discord dates, or a Discord avatar URL.
+// A web identity (`<namespace>:<subject>`, any platform's user) shows the roles it EFFECTIVELY holds -
+// chatPermsForIdentity's roleIds (its linked Discord member's real roles, else its onboarding grants) -
+// exactly like Discord member roles: profile role pills, name colour (incl. gradient role colours),
+// role-mention popout membership. Name, avatar and "Member Since" come from holt's identity directory (what
+// its platform last said; the first time holt saw it), else from its newest message in the guild.
 interface WebIdentityView {
-  userId: number
   key: string
-  /** Effective chat name (chat display name, else the site username). */
+  /** The platform the identity belongs to, when holt has seen it sign in. */
+  platform: string | null
   username: string
-  /** The site account username (the secondary handle line). */
-  siteUsername: string
-  /** The raw chat display name, null when the site username is used. */
-  chatDisplayName: string | null
-  avatar: string | null
+  avatar: string
   memberSince: string | null
-  // True when the account is a linked guild member (already listed as a
+  // True when the identity is a linked guild member (already listed as a
   // Discord member in role-member lists).
   guildMember: boolean
   roles: bridge.GuildRole[]
@@ -850,116 +832,69 @@ const WEB_IDENTITY_TTL_MS = 30_000
 const SITE_ADMIN_ROLE_ID = 'site-admin'
 const webIdentityCache = new Map<string, { expires: number; value: Promise<WebIdentityView | null> }>()
 
-function webIdentityView(guildId: string, userId: number): Promise<WebIdentityView | null> {
-  const cacheKey = `${guildId}:${userId}`
+function webIdentityView(guildId: string, key: string): Promise<WebIdentityView | null> {
+  const cacheKey = `${guildId}\n${key}`
   const hit = webIdentityCache.get(cacheKey)
   if (hit && hit.expires > Date.now()) return hit.value
-  const value = (async (): Promise<WebIdentityView | null> => {
-    const target = await resolveWebhookTarget({ kind: 'site', userId })
-    if (!target?.user) return null
-    const perms = await chatPermsForIdentity(target, guildId)
-    const roleIds = (perms.roleIds || []).filter((id) => id !== guildId)
-    const [guildRoles, style, avatar, created] = await Promise.all([
-      bridge.guildRolesByIds(guildId, roleIds).catch(() => [] as bridge.GuildRole[]),
-      webAuthorStyle(guildId, roleIds),
-      approvedAvatarUrlForUser(userId).catch(() => null),
-      query<{ created: Date | null }>(`SELECT created FROM users WHERE id = $1`, [userId])
-        .then((r) => r.rows[0]?.created ?? null).catch(() => null),
-    ])
-    // A site admin always shows the Admin chip, even when the guild role row
-    // is missing (no admin-tier chat role configured): a synthetic entry.
-    const admin = perms.siteAdmin
-    const roles: bridge.GuildRole[] = admin && !guildRoles.some((r) => r.roleId === admin.roleId)
-      ? [{ guildId, roleId: admin.roleId ?? SITE_ADMIN_ROLE_ID, name: admin.name, color: admin.color, position: admin.position, colors: null }, ...guildRoles]
-      : guildRoles
-    const memberSince = created ? new Date(created).toISOString() : null
-    return {
-      userId,
-      key: siteChatKey(userId),
-      username: effectiveChatName(target.user.username, target.user.chat_display_name),
-      siteUsername: target.user.username,
-      chatDisplayName: effectiveChatName(target.user.username, target.user.chat_display_name) === target.user.username
-        ? null
-        : target.user.chat_display_name?.trim() || null,
-      avatar: avatar ?? null,
-      memberSince,
-      guildMember: Boolean(perms.memberId),
-      roles,
-      // The new member badge (isNewMember: joined ≤7 days ago) keys off the
-      // same date the profile popout shows as "Member Since" - the site join
-      // date, never a Discord date. A web identity is never a rejoin or a bot.
-      style: { ...style, joinedAt: memberSince },
-    }
-  })()
+  const value = loadWebIdentityView(guildId, key)
   webIdentityCache.set(cacheKey, { expires: Date.now() + WEB_IDENTITY_TTL_MS, value })
   value.catch(() => webIdentityCache.delete(cacheKey))
   if (webIdentityCache.size > 2000) webIdentityCache.delete(webIdentityCache.keys().next().value as string)
   return value
 }
 
-// Drop cached web identity views (perks / onboarding / role changes).
-function forgetWebIdentity(userId: number | null): void {
-  // Other platforms' users have no site id to target: any identity change drops their (30s) views too.
-  extIdentityCache.clear()
-  if (userId === null) { webIdentityCache.clear(); return }
-  for (const key of webIdentityCache.keys()) if (key.endsWith(`:${userId}`)) webIdentityCache.delete(key)
-}
-
-// Discord's default avatar for another platform's user, stable per key.
-function extDefaultAvatar(key: string): string {
-  let hash = 0
-  for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
-  return `https://cdn.discordapp.com/embed/avatars/${hash % 6}.png`
-}
-
-// Profile popout for another platform's user in one guild: the name they last posted under (or their own,
-// for themselves), the roles their onboarding answers there grant, and when they first posted in the guild.
-const extIdentityCache = new Map<string, { expires: number; value: Promise<Record<string, unknown> | null> }>()
-
-function extIdentityView(guildId: string, key: string, ownName: string | null): Promise<Record<string, unknown> | null> {
-  const cacheKey = `${guildId}:${key}:${ownName ?? ''}`
-  const hit = extIdentityCache.get(cacheKey)
-  if (hit && hit.expires > Date.now()) return hit.value
-  const value = loadExtIdentityView(guildId, key, ownName)
-  extIdentityCache.set(cacheKey, { expires: Date.now() + WEB_IDENTITY_TTL_MS, value })
-  value.catch(() => extIdentityCache.delete(cacheKey))
-  if (extIdentityCache.size > 2000) extIdentityCache.delete(extIdentityCache.keys().next().value as string)
-  return value
-}
-
-async function loadExtIdentityView(guildId: string, key: string, ownName: string | null): Promise<Record<string, unknown> | null> {
-  const seen = await query<{ author_name: string; first_at: Date | null }>(
-    `SELECT (array_agg(m.author_name ORDER BY m.id DESC))[1] AS author_name, MIN(m.created_at) AS first_at
-     FROM discord_bridge_message m JOIN discord_bridge_channel c ON c.channel_id = m.channel_id
-     WHERE m.author_key = $1 AND c.guild_id = $2`,
-    [key, guildId],
-  ).then((r) => r.rows[0]).catch(() => undefined)
-  const name = ownName || seen?.author_name
+async function loadWebIdentityView(guildId: string, key: string): Promise<WebIdentityView | null> {
+  const [dir, seen] = await Promise.all([
+    identityByKey(key).catch(() => null),
+    query<{ author_name: string | null; first_at: Date | null }>(
+      `SELECT (array_agg(m.author_name ORDER BY m.id DESC))[1] AS author_name, MIN(m.created_at) AS first_at
+       FROM discord_bridge_message m JOIN discord_bridge_channel c ON c.channel_id = m.channel_id
+       WHERE m.author_key = $1 AND c.guild_id = $2`,
+      [key, guildId],
+    ).then((r) => r.rows[0]).catch(() => undefined),
+  ])
+  const name = dir?.name || seen?.author_name
   if (!name) return null
-  const perms = await chatPermsForIdentity({ userId: null, discordId: null, extKey: key, name, user: null }, guildId)
+  const perms = await chatPermsForIdentity({ extKey: key, discordId: dir?.discordId ?? null, name, admin: dir?.admin === true }, guildId)
   const roleIds = (perms.roleIds || []).filter((id) => id !== guildId)
-  const [roles, style] = await Promise.all([
+  const [guildRoles, style] = await Promise.all([
     bridge.guildRolesByIds(guildId, roleIds).catch(() => [] as bridge.GuildRole[]),
     webAuthorStyle(guildId, roleIds),
   ])
+  // A site admin always shows the Admin chip, even when the guild role row
+  // is missing (no admin-tier chat role configured): a synthetic entry.
+  const admin = perms.siteAdmin
+  const roles: bridge.GuildRole[] = admin && !guildRoles.some((r) => r.roleId === admin.roleId)
+    ? [{ guildId, roleId: admin.roleId ?? SITE_ADMIN_ROLE_ID, name: admin.name, color: admin.color, position: admin.position, colors: null }, ...guildRoles]
+    : guildRoles
+  const memberSince = dir?.firstSeen ?? (seen?.first_at ? new Date(seen.first_at).toISOString() : null)
   return {
     key,
+    platform: dir?.platform ?? null,
     username: name,
-    displayName: name,
-    chatDisplayName: null,
-    avatar: extDefaultAvatar(key),
-    memberSince: seen?.first_at ? new Date(seen.first_at).toISOString() : null,
-    pronouns: null,
-    aboutMe: null,
-    roles: roles.map((r) => ({ roleId: r.roleId, name: r.name, color: r.color, colors: roleColorsFor(r) })),
-    style,
+    avatar: dir?.avatar || webDefaultAvatar(key),
+    memberSince,
+    guildMember: Boolean(perms.memberId),
+    roles,
+    // The new member badge (isNewMember: joined ≤7 days ago) keys off the same date the profile popout shows
+    // as "Member Since". A web identity is never a rejoin or a bot.
+    style: { ...style, joinedAt: memberSince },
   }
 }
 
-// Discord's default avatar for a web identity without an approved upload
-// (keyed by the site id, never a Discord id).
-function webDefaultAvatar(userId: number): string {
-  return `https://cdn.discordapp.com/embed/avatars/${userId % 6}.png`
+// Drop cached web identity views (identity / onboarding / role changes). No keys: all of them.
+function forgetWebIdentity(keys: string[] | null): void {
+  if (keys === null) { webIdentityCache.clear(); return }
+  for (const cacheKey of webIdentityCache.keys()) {
+    if (keys.some((key) => cacheKey.endsWith(`\n${key}`))) webIdentityCache.delete(cacheKey)
+  }
+}
+
+// Discord's default avatar for a web identity without one, stable per key (never a Discord id).
+function webDefaultAvatar(key: string): string {
+  let hash = 0
+  for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  return `https://cdn.discordapp.com/embed/avatars/${hash % 6}.png`
 }
 
 // A reactor on the reactions popout / tooltip. Web reactors carry the site
@@ -982,32 +917,20 @@ const reactorRestCache = new Map<string, { expires: number; name: string; avatar
 // Discord keys use the bot-synced guild directory; a miss falls back to a
 // cached REST member lookup, at most REACTOR_REST_LOOKUPS per request.
 async function reactorViews(guildId: string, keys: string[]): Promise<ReactorView[]> {
-  const unique = [...new Set(keys)].filter((k) => siteIdOfChatKey(k) !== null || /^discord:\d{15,22}$/.test(k) || extKeyOf(k) !== null).slice(0, 200)
+  const unique = [...new Set(keys.map((k) => (k.startsWith('discord:') ? k : webIdentityKey(k) ?? '')))]
+    .filter((k) => /^discord:\d{15,22}$/.test(k) || webIdentityKey(k) !== null).slice(0, 200)
   let restBudget = REACTOR_REST_LOOKUPS
   const discordIds = unique.filter((k) => k.startsWith('discord:')).map((k) => k.slice(8))
   const styles: Record<string, AuthorStyle | null> = discordIds.length
     ? await authorStylesFor(guildId, discordIds).catch(() => ({} as Record<string, AuthorStyle | null>))
     : {}
   const views = await Promise.all(unique.map(async (key): Promise<ReactorView> => {
-    if (extKeyOf(key)) {
-      const view = await extIdentityView(guildId, key, null).catch(() => null)
-      return {
-        key,
-        name: typeof view?.username === 'string' ? view.username : 'Unknown user',
-        avatar: extDefaultAvatar(key),
-        color: (view?.style as AuthorStyle | null | undefined)?.color ?? null,
-        direction: 'web',
-        discordId: null,
-      }
-    }
-    const webId = siteIdOfChatKey(key)
-    if (webId !== null) {
-      const userId = webId
-      const view = await webIdentityView(guildId, userId).catch(() => null)
+    if (!key.startsWith('discord:')) {
+      const view = await webIdentityView(guildId, key).catch(() => null)
       return {
         key,
         name: view?.username || 'Unknown user',
-        avatar: view?.avatar || webDefaultAvatar(userId),
+        avatar: view?.avatar || webDefaultAvatar(key),
         color: view?.style?.color ?? null,
         direction: 'web',
         discordId: null,
@@ -1045,8 +968,8 @@ async function reactorViews(guildId: string, keys: string[]): Promise<ReactorVie
 // presence (chat history or an onboarding answer) are considered. Linked guild
 // members are excluded (Discord already lists them).
 async function webRoleHolders(guildId: string, roleId: string): Promise<WebIdentityView[]> {
-  const candidates = new Set<number>(await onboardingRoleHolders(guildId, roleId, 300).catch(() => []))
-  const views = await Promise.all([...candidates].slice(0, 300).map((id) => webIdentityView(guildId, id).catch(() => null)))
+  const candidates = new Set<string>(await onboardingRoleHolders(guildId, roleId, 300).catch(() => []))
+  const views = await Promise.all([...candidates].slice(0, 300).map((key) => webIdentityView(guildId, key).catch(() => null)))
   return views.filter((v): v is WebIdentityView => Boolean(v && !v.guildMember && v.roles.some((r) => r.roleId === roleId)))
 }
 
@@ -1107,25 +1030,9 @@ function watchWebIdentityChanges(): void {
       ...(Array.isArray(payload.keys) ? payload.keys : []),
       ...(Array.isArray(payload.targetKeys) ? payload.targetKeys : []),
     ].filter((k): k is string => typeof k === 'string')
-    const siteIds = keys.map((k) => siteIdOfChatKey(k)).filter((id): id is number => id !== null)
-    if (typeof payload.userId === 'number') siteIds.push(payload.userId)
-    if (!siteIds.length) forgetWebIdentity(null)
-    else for (const id of siteIds) forgetWebIdentity(id)
+    const webKeys = keys.map((k) => webIdentityKey(k)).filter((k): k is string => k !== null)
+    forgetWebIdentity(webKeys.length ? webKeys : null)
   })
-}
-
-// A page on another platform's origin (holt-service sets FOREIGN_PAGE_HEADER): abulxt's same-origin avatar
-// paths in JSON bodies become absolute (chat-caller.ts absolutizeSiteAvatars). Sealed (binary) bodies are
-// left alone; channel and guild lists, the sealed ones, carry no avatars.
-let foreignPageSiteOrigin: string | null = null
-
-function rewriteForForeignPage(response: ServerResponse): void {
-  const origin = foreignPageSiteOrigin
-  const end = response.end.bind(response) as (...args: unknown[]) => ServerResponse
-  ;(response as unknown as { end: (...args: unknown[]) => ServerResponse }).end = (chunk?: unknown, ...rest: unknown[]) => {
-    if (typeof chunk === 'string') chunk = absolutizeSiteAvatars(chunk, origin)
-    return end(chunk, ...rest)
-  }
 }
 
 // A refused Discord call (post-moderate): Discord's status and JSON code
@@ -1143,12 +1050,10 @@ async function discordFailure(response: ServerResponse, res: Response): Promise<
 export function discordBridgeApi(): Plugin {
   function register(server: { middlewares: ViteDevServer['middlewares'] }) {
     watchWebIdentityChanges()
-    void loadConfig().then((config) => { foreignPageSiteOrigin = siteOriginOf(config) }).catch(() => {})
     // Any thrown error (e.g. a DB error from an out-of-range id) becomes a
     // generic 500 instead of an unhandled rejection that leaves the request
     // hanging; details stay in the server log.
     server.middlewares.use('/api/discord/bridge/', (request, response) => {
-      if (request.headers[FOREIGN_PAGE_HEADER] === 'holt') rewriteForForeignPage(response)
       handleBridgeRequest(request, response).catch((error) => {
         console.warn('[bridge-api] request failed', error instanceof Error ? error.message : error)
         if (!response.headersSent) sendJson(response, 500, { error: 'Request failed.' })
@@ -1460,7 +1365,7 @@ export function discordBridgeApi(): Plugin {
             bridged: Boolean(channel?.enabled),
             staff: canModerateHere && (hasPerm(perms.permissions, Perm.MANAGE_WEBHOOKS) || hasPerm(perms.permissions, Perm.BAN_WEBHOOKS)),
             botManageMessages: channelId && channel?.enabled ? await botCanManageMessages(gateChannelId, channel.guildId) : false,
-            selfKeys: [...(identity.user ? callerKeys(identity.user) : [identity.ownerKey]), ...(discordId ? [`discord:${discordId}`] : [])],
+            selfKeys: [...(identity.user ? [callerKey(identity.user)] : [identity.ownerKey]), ...(discordId ? [`discord:${discordId}`] : [])],
           },
           banned,
           timeout,
@@ -1500,7 +1405,6 @@ export function discordBridgeApi(): Plugin {
         return sendJson(response, 200, {
           key: webhookKey(target),
           keys: webhookKeys(target),
-          userId: target.userId,
           discordId: target.discordId,
           name: target.name,
           tier: targetPerms.tier,
@@ -1772,9 +1676,9 @@ export function discordBridgeApi(): Plugin {
         const channelId = url.searchParams.get('channel') || ''
         const requested = (url.searchParams.get('ids') || '').split(',')
         const ids = requested.filter((id) => /^\d{15,22}$/.test(id)).slice(0, 100)
-        // Web (webhook) authors by key ('user:<siteId>'): their effective
+        // Web (webhook) authors by key (`<namespace>:<subject>`): their effective
         // roles' color (incl. gradients); no member cosmetics.
-        const webKeys = [...new Set(requested.filter((key) => siteIdOfChatKey(key) !== null || extKeyOf(key) !== null))].slice(0, 50)
+        const webKeys = [...new Set(requested.filter((key) => !key.startsWith('discord:') && webIdentityKey(key) === key))].slice(0, 50)
         if (!channelId) return sendJson(response, 400, { error: 'Missing channel.' })
         if (!ids.length && !webKeys.length) return sendJson(response, 200, { authors: {} })
         const authorsGate = await viewGate(identity.user, channelId)
@@ -1788,9 +1692,7 @@ export function discordBridgeApi(): Plugin {
           return sendRateLimited(response, authorsLimit.retryAfterSec, authorsLimit.error)
         }
         const authors: Record<string, AuthorStyle | null> = ids.length ? await authorStylesFor(authorsGate.guildId, ids).catch(() => ({})) : {}
-        const webStyles = await Promise.all(webKeys.map((key) => (extKeyOf(key)
-          ? extIdentityView(authorsGate.guildId, key, null).then((v) => (v?.style as AuthorStyle | undefined) ?? null)
-          : webIdentityView(authorsGate.guildId, siteIdOfChatKey(key)!).then((v) => v?.style ?? null)).catch(() => null)))
+        const webStyles = await Promise.all(webKeys.map((key) => webIdentityView(authorsGate.guildId, key).then((v) => v?.style ?? null).catch(() => null)))
         webKeys.forEach((key, i) => { authors[key] = webStyles[i] ?? null })
         return sendJson(response, 200, { authors })
       }
@@ -1926,119 +1828,84 @@ export function discordBridgeApi(): Plugin {
         return sendJson(response, 200, body)
       }
 
-      // The signed-in user's own account popout (user panel). Guild-independent
-      // and channel-free: site username, approved site avatar (else the linked
-      // Discord avatar, else the default), site join date ("Member Since") and
-      // the linked Discord identity from the users table. No guild roles, guild
-      // join date, guild name/icon or guild tags. Auth only, no VIEW gate.
+      // The signed-in user's own account popout (user panel). Guild-independent and channel-free: the name
+      // and avatar their platform gave, when holt first saw them ("Member Since"), the Admin chip for a site
+      // admin, and their linked Discord account (a trusted platform's). No guild roles. Auth only, no VIEW gate.
       if (path === 'self-profile') {
         if (req.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed' })
         if (identity.isGuest || !identity.user) return sendJson(response, 401, { error: 'Sign in to chat.' })
         const selfLimit = rateLimit(`bridge:self-profile:${identity.ownerKey}`, { limit: 30, windowMs: 60_000, error: 'Too many profile requests. Slow down.' })
         if (!selfLimit.ok) return sendRateLimited(response, selfLimit.retryAfterSec, selfLimit.error)
-        // Another platform's user: the name their platform gave holt. Roles show per guild (webhook-profile).
-        if (isExtUser(identity.user)) {
-          const ext = identity.user
-          return sendJson(response, 200, {
-            userId: ext.ext_key, username: ext.username, displayName: ext.username, chatDisplayName: null,
-            avatar: extDefaultAvatar(ext.ext_key), memberSince: null, pronouns: null, aboutMe: null, roles: [], discord: null,
-          })
-        }
         const me = identity.user
-        const [siteAvatar, created] = await Promise.all([
-          approvedAvatarUrlForUser(me.id).catch(() => null),
-          query<{ created: Date | null }>(`SELECT created FROM users WHERE id = $1`, [me.id])
-            .then((r) => r.rows[0]?.created ?? null).catch(() => null),
-        ])
+        const dir = await identityByKey(me.ext_key).catch(() => null)
         // Site admins show the Admin chip (guild-independent: only the admin
         // role entry, never the guild's roles; the default guild's admin role).
         const adminChip = me.admin ? await siteAdminRole(await defaultBridgedGuild()) : null
-        const discordId = me.discord_id || null
-        const discordAvatar = discordId && me.discord_avatar
-          ? (/^https?:\/\//i.test(me.discord_avatar)
-            ? me.discord_avatar
-            : `https://cdn.discordapp.com/avatars/${discordId}/${me.discord_avatar}.webp?size=128`)
-          : null
+        const member = me.discord_id
+          ? await query<{ username: string; display_name: string }>(`SELECT username, display_name FROM discord_bridge_guild_member WHERE user_id = $1 LIMIT 1`, [me.discord_id])
+            .then((r) => r.rows[0]).catch(() => undefined)
+          : undefined
         return sendJson(response, 200, {
-          userId: String(me.id),
+          userId: me.ext_key,
           username: me.username,
-          displayName: effectiveChatName(me.username, me.chat_display_name),
-          chatDisplayName: me.chat_display_name?.trim() || null,
-          avatar: siteAvatar ?? discordAvatar ?? webDefaultAvatar(me.id),
-          memberSince: created ? new Date(created).toISOString() : null,
-          pronouns: me.pronouns ?? null,
-          aboutMe: me.about_me ?? null,
+          displayName: me.username,
+          chatDisplayName: null,
+          avatar: me.avatar || webDefaultAvatar(me.ext_key),
+          memberSince: dir?.firstSeen ?? null,
+          pronouns: null,
+          aboutMe: null,
           roles: adminChip
             ? [{ roleId: adminChip.roleId ?? SITE_ADMIN_ROLE_ID, name: adminChip.name, color: adminChip.color, colors: null }]
             : [],
-          discord: discordId
-            ? { username: me.discord_username || null, name: me.discord_name || null, avatar: discordAvatar }
+          discord: me.discord_id
+            ? { username: member?.username || null, name: member?.display_name || null, avatar: null }
             : null,
         })
       }
 
-      // Profile popout data for a web (webhook) identity - another author's
-      // `user:<siteId>` key, or `self` for the signed-in caller's account
-      // popout: display name, approved avatar, site join date ("Member
-      // Since") and the EFFECTIVE roles it holds (webIdentityView), sorted by
-      // position like Discord member roles. Never a Discord id/date/avatar.
-      // Same VIEW gate as `profile`.
-      // Public presence for web identities ('user:<siteId>' keys): online /
-      // idle / dnd / offline (invisible reads offline). Same VIEW gate as the
-      // author rows it decorates; site ids only, never a Discord id.
+      // Public presence for web identities (`<namespace>:<subject>` keys): online / idle / dnd / offline
+      // (invisible reads offline). Same VIEW gate as the author rows it decorates.
       if (path === 'presence') {
         if (req.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed' })
         const channelId = url.searchParams.get('channel') || ''
         const presenceKeys = [...new Set((url.searchParams.get('keys') || '').split(',')
-          .filter((key) => siteIdOfChatKey(key) !== null))].slice(0, 100)
+          .map((key) => webIdentityKey(key)).filter((key): key is string => key !== null))].slice(0, 100)
         if (!channelId) return sendJson(response, 400, { error: 'Missing channel.' })
         const presenceGate = await viewGate(identity.user, channelId)
         if (!presenceGate.ok) return sendJson(response, presenceGate.status, presenceGate.body)
         const presence: Record<string, PublicPresence> = {}
-        for (const key of presenceKeys) presence[key] = presencePublicFor(siteIdOfChatKey(key)!)
+        for (const key of presenceKeys) presence[key] = presencePublicFor(key)
         return sendJson(response, 200, { presence })
       }
 
+      // Profile popout data for a web (webhook) identity - another author's key, or `self` for the signed-in
+      // caller: name, avatar, "Member Since" and the EFFECTIVE roles it holds in this channel's guild
+      // (webIdentityView), sorted by position like Discord member roles. Same VIEW gate as `profile`.
       if (path === 'webhook-profile') {
         if (req.method !== 'GET') return sendJson(response, 405, { error: 'Method not allowed' })
         const channelId = url.searchParams.get('channel') || ''
         const rawKey = url.searchParams.get('key') || ''
-        const selfKey = rawKey === 'self'
-        const parsedKey = selfKey ? null : parseWebhookTarget(rawKey)
-        // Another platform's user (their key, or `self` for one): their effective roles in this guild.
-        const extKey = selfKey ? (isExtUser(identity.user) ? identity.user.ext_key : null) : parsedKey?.kind === 'ext' ? parsedKey.key : null
-        if (channelId && extKey) {
-          const extGate = await viewGate(identity.user, channelId)
-          if (!extGate.ok) return sendJson(response, extGate.status, extGate.body)
-          const extLimit = rateLimit(`bridge:profile:${identity.ownerKey}`, { limit: 30, windowMs: 60_000, error: 'Too many profile requests. Slow down.' })
-          if (!extLimit.ok) return sendRateLimited(response, extLimit.retryAfterSec, extLimit.error)
-          const ownName = isExtUser(identity.user) && identity.user.ext_key === extKey ? identity.user.username : null
-          const view = await extIdentityView(extGate.guildId, extKey, ownName).catch(() => null)
-          if (!view) return sendJson(response, 404, { error: 'Unknown user.' })
-          return sendJson(response, 200, view)
-        }
-        const siteId = selfKey ? (identity.user?.id ?? null) : parsedKey?.kind === 'site' ? parsedKey.userId : null
-        if (!channelId || (!selfKey && siteId === null)) return sendJson(response, 400, { error: 'Missing channel or key.' })
-        if (siteId === null) return sendJson(response, 401, { error: 'Sign in to chat.' })
+        const parsedKey = rawKey === 'self' ? null : parseWebhookTarget(rawKey)
+        const key = rawKey === 'self' ? identity.user?.ext_key ?? null : parsedKey?.kind === 'ext' ? parsedKey.key : null
+        if (!channelId || (rawKey !== 'self' && key === null)) return sendJson(response, 400, { error: 'Missing channel or key.' })
+        if (key === null) return sendJson(response, 401, { error: 'Sign in to chat.' })
         const whGate = await viewGate(identity.user, channelId)
         if (!whGate.ok) return sendJson(response, whGate.status, whGate.body)
         const whLimit = rateLimit(`bridge:profile:${identity.ownerKey}`, { limit: 30, windowMs: 60_000, error: 'Too many profile requests. Slow down.' })
         if (!whLimit.ok) return sendRateLimited(response, whLimit.retryAfterSec, whLimit.error)
-        const view = await webIdentityView(whGate.guildId, siteId).catch(() => null)
+        const view = await webIdentityView(whGate.guildId, key).catch(() => null)
         if (!view) return sendJson(response, 404, { error: 'Unknown user.' })
-        const profileText = await query<{ pronouns: string | null; about_me: string | null }>(
-          'SELECT pronouns, about_me FROM users WHERE id = $1', [siteId],
-        ).then((r) => ({ pronouns: r.rows[0]?.pronouns ?? null, aboutMe: r.rows[0]?.about_me ?? null })).catch(() => ({ pronouns: null, aboutMe: null }))
         return sendJson(response, 200, {
           key: view.key,
-          username: view.siteUsername,
+          platform: view.platform,
+          username: view.username,
           displayName: view.username,
-          chatDisplayName: view.chatDisplayName,
+          chatDisplayName: null,
           avatar: view.avatar,
           memberSince: view.memberSince,
-          presence: presencePublicFor(siteId),
-          pronouns: profileText.pronouns,
-          aboutMe: profileText.aboutMe,
+          presence: presencePublicFor(key),
+          pronouns: null,
+          aboutMe: null,
           roles: view.roles.map((r) => ({ roleId: r.roleId, name: r.name, color: r.color, colors: roleColorsFor(r) })),
           style: view.style,
         })
@@ -2120,13 +1987,11 @@ export function discordBridgeApi(): Plugin {
         })
 
         const user = identity.user
-        // Web messages show the account's chat display name (fallback: site username).
-        const authorName = effectiveChatName(user.username, user.chat_display_name)
-        // Uploaded + APPROVED chat avatar first (absolute public URL, see
-        // avatar-store.ts), else the linked Discord avatar, else null (the
-        // bot/web fall back to Discord's default). Client-supplied avatar
-        // URLs are never accepted.
-        const authorAvatar = await callerAvatar(user)
+        // Web messages show the name the caller's platform gave (its display name when trusted).
+        const authorName = effectiveChatName(user.username, null)
+        // The avatar a trusted platform vouched for, else null (the bot/web fall back to Discord's default).
+        // Client-supplied avatar URLs are never accepted.
+        const authorAvatar = callerAvatar(user)
 
         const { message, existed } = await bridge.recordMessage({
           channelId: scope.id,
@@ -2228,8 +2093,8 @@ export function discordBridgeApi(): Plugin {
           channelId: destination.id,
           direction: 'web',
           authorKey: callerKey(user),
-          authorName: effectiveChatName(user.username, user.chat_display_name),
-          authorAvatar: await callerAvatar(user),
+          authorName: effectiveChatName(user.username, null),
+          authorAvatar: callerAvatar(user),
           authorColor: viewPerms.color,
           authorRole: viewPerms.tier === 'member' || viewPerms.tier === 'guest' ? null : viewPerms.tier,
           content: '',
@@ -2594,7 +2459,7 @@ export function discordBridgeApi(): Plugin {
           return sendJson(response, actorGate.status, actorGate.body)
         }
         const actorPerms = actorGate.perms
-        const actorName = identity.user.discord_name || identity.user.username
+        const actorName = identity.user.username
 
         if (action === 'lockdown') {
           // Lockdown: mod+ locks/unlocks the channel, disabling sends for
@@ -2697,7 +2562,7 @@ export function discordBridgeApi(): Plugin {
         await emit(DISCORD_BRIDGE_OWNER_KEY, 'bridge.typing', {
           channelId: typingScope.id,
           authorKey: callerKey(identity.user),
-          authorName: effectiveChatName(identity.user.username, identity.user.chat_display_name),
+          authorName: effectiveChatName(identity.user.username, null),
         })
         return sendJson(response, 200, { ok: true })
       }
@@ -2803,7 +2668,7 @@ export function discordBridgeApi(): Plugin {
         // grant / perk floor), flagged so the popout marks them as webhooks.
         const webHolders = await webRoleHolders(channel.guildId, roleId).catch(() => [])
         for (const w of webHolders) {
-          holders.push({ userId: w.key, username: w.username, displayName: w.username, avatar: w.avatar || webDefaultAvatar(w.userId), webhook: true })
+          holders.push({ userId: w.key, username: w.username, displayName: w.username, avatar: w.avatar, webhook: true })
         }
         holders.sort((a, b) => a.displayName.localeCompare(b.displayName))
         return sendJson(response, 200, {
@@ -2846,12 +2711,7 @@ export function discordBridgeApi(): Plugin {
           cursor,
           limit: Math.min(Math.max(Number(sp.get('limit')) || 25, 1), 50),
         })
-        // Cards carry owner avatars: a partner page needs them absolute even
-        // inside a sealed body (rewriteForForeignPage only sees plain JSON).
-        const out = request.headers[FOREIGN_PAGE_HEADER] === 'holt'
-          ? JSON.parse(absolutizeSiteAvatars(JSON.stringify(page), foreignPageSiteOrigin)) as typeof page
-          : page
-        return sendSealedJson(req, response, out)
+        return sendSealedJson(req, response, page)
       }
 
       // POST post: create a forum post (title, body, tags). Stored at once as
@@ -2909,8 +2769,8 @@ export function discordBridgeApi(): Plugin {
           name,
           appliedTags,
           ownerKey: callerKey(user),
-          ownerName: effectiveChatName(user.username, user.chat_display_name),
-          ownerAvatar: await callerAvatar(user),
+          ownerName: effectiveChatName(user.username, null),
+          ownerAvatar: callerAvatar(user),
           ownerColor: postPerms.color,
           authorRole: postPerms.tier === 'member' || postPerms.tier === 'guest' ? null : postPerms.tier,
           content,
@@ -2970,7 +2830,7 @@ export function discordBridgeApi(): Plugin {
           return sendJson(response, 403, { error: 'This post is locked.', code: ForumErrorCode.THREAD_LOCKED, postLocked: true })
         }
         const forum = pmScope.channel
-        const actorName = identity.user.discord_name || identity.user.username
+        const actorName = identity.user.username
         const reason = `Post ${action} from the web chat by ${actorName}`.slice(0, 200)
         const threadId = post.threadId
         if (action === 'delete') {

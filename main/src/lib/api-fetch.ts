@@ -3,7 +3,7 @@ import { activeApiUrl } from './api-base'
 import { failoverFetch } from './api-failover'
 import { rateLimitedRequest, routeBucket, type RateLimitOptions } from './rate-limit-queue'
 
-const TOKEN_KEY = 'abulxt:auth-token'
+const TOKEN_KEY = 'holt:session' // holt's session (embed/proxy-session.ts), not the platform's login
 
 function authToken(): string | null {
   try {

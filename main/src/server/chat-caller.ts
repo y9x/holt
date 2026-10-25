@@ -1,49 +1,42 @@
-// Who is calling the chat API (holt-chat): a site account, or another platform's user.
+// Who is calling the chat API (holt-chat): a platform's signed-in user, or a guest.
 //
-// - A site account (namespace `abulxt`: the abulxt and Abstract sites) arrives with its own abulxt token and
-//   is resolved by the vendored identity.ts, exactly as on abulxt.
-// - Anyone else (nocturne, lab, ...) was verified by holt-service with their own platform (forward-auth.ts,
-//   then a holt session). holt-service hands holt-chat that principal in X-Holt-Principal, signed with a key
-//   derived from `sessionSecret`, short-lived, and only over loopback. holt-service strips any inbound copy
-//   and the caller's Authorization/Cookie headers on those platforms, so a partner page can neither forge a
-//   principal nor smuggle in an abulxt token.
+// holt has no accounts. holt-service verifies the visitor with their own platform (forward-auth.ts, then a
+// holt session) and hands holt-chat that principal in X-Holt-Principal, signed with a key derived from
+// `sessionSecret`, short-lived, and only over loopback. holt-service strips any inbound copy and the caller's
+// Authorization/Cookie headers, so a page can neither forge a principal nor smuggle in other credentials.
 //
-// The other platform's user becomes an ExtChatUser: it has the fields the chat API reads off a DbUser, with
-// `id: null` (no site account, so no site-only feature can mistake it for one) and `ext_key`, its chat
-// identity key (`<namespace>:<subject>`). Bans, timeouts, overwrites, onboarding and author keys all use it.
+// The principal becomes a ChatUser keyed by its chat identity key (`<namespace>:<subject>`: `abulxt:42`,
+// `lab:1`). Bans, timeouts, overwrites, onboarding and author keys all use it. A trusted platform
+// (platforms.ts `trusted`) also vouches for the user's linked Discord account and site-admin status.
 
 import type { IncomingMessage } from 'node:http'
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import type { DbUser } from './auth-db-api.js'
-import { resolveIdentity, clientIp, type Identity } from './identity.js'
-import { clientGeo } from './traffic-log.js'
-import { extKeyOf } from './discord-chat-perms.js'
+import { clientIp, guestOwnerKey } from './identity.js'
+import { webIdentityKey } from './chat-identity-key.ts'
+import { touchIdentity } from './identity-directory.ts'
 import type { Principal } from './identity-token.ts'
 
-export interface ExtChatUser {
-  id: null
+export interface ChatUser {
   /** `<namespace>:<subject>`: author key, onboarding key, ban/timeout/overwrite subject. */
   ext_key: string
   /** The platform the user signed in on (links, badges). */
   platform: string
+  /** The name the platform gave (its display name when it is trusted and has one). */
   username: string
   email_verified: boolean
-  admin: false
-  /** Platform-supplied avatar URL (https only), or null. */
+  /** Site admin, vouched for by a trusted platform. Always false for partners. */
+  admin: boolean
+  /** Platform-supplied avatar URL (https only), or null. Shown only for trusted platforms (moderated there). */
   avatar: string | null
-  discord_id: null
-  discord_avatar: null
-  discord_name: null
-  chat_display_name: null
-  global_name?: undefined
+  /** The user's linked Discord account, vouched for by a trusted platform; null otherwise. */
+  discord_id: string | null
 }
 
-export type ChatUser = DbUser | ExtChatUser
-
-export type ChatIdentity = Omit<Identity, 'user'> & { user: ChatUser | null }
-
-export function isExtUser(user: ChatUser | null | undefined): user is ExtChatUser {
-  return Boolean(user && user.id === null && 'ext_key' in user)
+export interface ChatIdentity {
+  ownerKey: string
+  user: ChatUser | null
+  isGuest: boolean
+  ip: string
 }
 
 export const PRINCIPAL_HEADER = 'x-holt-principal'
@@ -87,18 +80,20 @@ export function readPrincipal(value: string, sessionSecret: string, nowMs = Date
     emailVerified: claims.emailVerified === true,
     avatar: typeof claims.avatar === 'string' ? claims.avatar : null,
     tier: typeof claims.tier === 'string' ? claims.tier : null,
+    discordId: typeof claims.discordId === 'string' && /^\d{15,22}$/.test(claims.discordId) ? claims.discordId : null,
+    admin: claims.admin === true,
   }
 }
 
-/** The chat user for a verified principal, or null when its key could name a site account, Discord or a guest. */
-export function extUserOf(principal: Principal): ExtChatUser | null {
-  const key = extKeyOf(principal.key)
-  if (!key) return null
+/** The chat user for a verified principal, or null when its key is not a web identity key (Discord, guest). */
+export function extUserOf(principal: Principal): ChatUser | null {
+  const key = webIdentityKey(principal.key)
+  if (!key || key !== principal.key) return null
   const name = principal.name.trim().slice(0, 32) || key.slice(key.indexOf(':') + 1)
   const avatar = principal.avatar && /^https:\/\//.test(principal.avatar) ? principal.avatar : null
   return {
-    id: null, ext_key: key, platform: principal.platformId, username: name, email_verified: principal.emailVerified,
-    admin: false, avatar, discord_id: null, discord_avatar: null, discord_name: null, chat_display_name: null,
+    ext_key: key, platform: principal.platformId, username: name, email_verified: principal.emailVerified,
+    admin: principal.admin === true, avatar, discord_id: principal.discordId ?? null,
   }
 }
 
@@ -107,43 +102,57 @@ function fromLoopback(request: IncomingMessage): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
 }
 
-/**
- * The caller. With X-Holt-Principal (another platform's user) it is that user, or a guest when the header does
- * not verify: never a fallback to other credentials. Without it, the vendored abulxt resolution.
- */
+/** The caller: the principal holt-service signed, or a guest. Never any other credential. */
 export async function resolveChatIdentity(request: IncomingMessage, sessionSecret: string | null): Promise<ChatIdentity> {
-  const header = request.headers[PRINCIPAL_HEADER]
-  if (header === undefined) return resolveIdentity(request)
   const ip = clientIp(request)
-  const guest: ChatIdentity = { ownerKey: `guest:${ip}`, user: null, isGuest: true, ip, ...clientGeo(request) }
-  if (typeof header !== 'string' || !sessionSecret || !fromLoopback(request)) return guest
+  const guest: ChatIdentity = { ownerKey: guestOwnerKey(ip), user: null, isGuest: true, ip }
+  const header = request.headers[PRINCIPAL_HEADER]
+  if (typeof header !== 'string' || !header || !sessionSecret || !fromLoopback(request)) return guest
   const principal = readPrincipal(header, sessionSecret)
   const user = principal ? extUserOf(principal) : null
   if (!user) return guest
+  touchIdentity(user)
   return { ...guest, ownerKey: user.ext_key, user, isGuest: false }
 }
 
 /**
- * Set by holt-service on requests from a platform with its own accounts (its page is on another origin).
- * Never trusted from outside: holt-service strips inbound copies.
+ * A platform's push (identity changes, deletions), after holt-service verified the platform's hook signature:
+ * which platform it is and what it may speak for. Signed like the principal, with its own purpose string.
  */
-export const FOREIGN_PAGE_HEADER = 'x-holt-api'
+export const PLATFORM_HEADER = 'x-holt-platform'
 
-const SITE_AVATAR_PATH = /"\/api\/avatars\//g
-
-/**
- * abulxt avatars are stored and served as same-origin paths (`/api/avatars/<sha>.webp`). On another
- * platform's page that path is the partner's own server, so responses and realtime frames for those pages
- * point it at abulxt's public origin instead. Pure.
- */
-export function absolutizeSiteAvatars(json: string, siteOrigin: string | null): string {
-  if (!siteOrigin || !json.includes('"/api/avatars/')) return json
-  return json.replace(SITE_AVATAR_PATH, `"${siteOrigin}/api/avatars/`)
+export interface PlatformClaim {
+  id: string
+  namespace: string
+  trusted: boolean
 }
 
-/** abulxt's public origin (avatars.publicOrigin, else mail.publicOrigin), or null. */
-export function siteOriginOf(config: unknown): string | null {
-  const c = config as { avatars?: { publicOrigin?: unknown }; mail?: { publicOrigin?: unknown } } | null
-  const raw = c?.avatars?.publicOrigin || c?.mail?.publicOrigin
-  return typeof raw === 'string' && /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(raw.replace(/\/$/, '')) ? raw.replace(/\/$/, '') : null
+function platformMac(sessionSecret: string, body: string): string {
+  const key = createHmac('sha256', sessionSecret).update('holt-chat platform v1').digest()
+  return createHmac('sha256', key).update(body).digest('base64url')
+}
+
+export function signPlatformHeader(claim: PlatformClaim, sessionSecret: string, nowMs = Date.now()): string {
+  const body = Buffer.from(JSON.stringify({ ...claim, exp: nowMs + PRINCIPAL_TTL_MS })).toString('base64url')
+  return `${body}.${platformMac(sessionSecret, body)}`
+}
+
+/** The platform behind a push, or null unless holt-service signed it (and only over loopback). */
+export function readPlatformHeader(request: IncomingMessage, sessionSecret: string, nowMs = Date.now()): PlatformClaim | null {
+  const value = request.headers[PLATFORM_HEADER]
+  if (typeof value !== 'string' || !fromLoopback(request)) return null
+  const dot = value.indexOf('.')
+  if (dot <= 0) return null
+  const body = value.slice(0, dot)
+  const given = Buffer.from(value.slice(dot + 1))
+  const expected = Buffer.from(platformMac(sessionSecret, body))
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null
+  try {
+    const claims = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Record<string, unknown>
+    if (typeof claims.exp !== 'number' || claims.exp <= nowMs) return null
+    if (typeof claims.id !== 'string' || typeof claims.namespace !== 'string') return null
+    return { id: claims.id, namespace: claims.namespace, trusted: claims.trusted === true }
+  } catch {
+    return null
+  }
 }

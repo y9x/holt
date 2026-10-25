@@ -1,14 +1,14 @@
-// holt-chat: the chat API (/api/discord/bridge/*) served by holt, on loopback only. It runs abulxt's own
-// bridge API code (vendored, VENDOR.md) the same way abulxt's app server does: `vite preview` with the
-// plugins as Vite plugins, against the same database, so behaviour is identical by construction.
+// holt-chat: the chat API, served by holt on loopback only, against holt's own database. `vite preview` with
+// the API modules as Vite plugins:
 //
-//   npm run chat-api        127.0.0.1:8831, reached only through holt-service's licensed proxy
-//                           (/<platform>/_holt/api/discord/bridge/* -> /api/discord/bridge/*).
+//   npm run chat-api        127.0.0.1:8831, reached only through holt-service:
+//     /api/discord/bridge/*   the chat API          (<platform>/_holt/api/discord/bridge/*)
+//     /api/rt                 realtime (chat-rt.ts)  (WS <platform>/_holt/api/rt)
+//     /api/holt-account/*     Set Status, rail folders (holt-account-api.ts)
+//     /api/holt-platform/*    a platform's pushes, after holt-service checked its hook signature
 //
-// Realtime: abulxt accounts keep abulxt's own /api/rt (it also carries their account and AI events); chat
-// events emitted here reach those sockets through the Postgres NOTIFY relay (events.ts), the same way the
-// bot's do. Other platforms' users get this process's /api/rt (chat-rt.ts), reached as holt-service's
-// WS /<platform>/_holt/api/rt. The relay runs here either way, so caches and sockets hear every change.
+// Every caller arrives as the principal holt-service signed (chat-caller.ts). The event relay (events.ts)
+// runs here too, so caches and sockets hear what the bot emits.
 
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,6 +19,7 @@ import { startEventRelay } from './src/server/events.ts'
 import { apiGuard } from './src/server/api-guard.ts'
 import { discordBridgeApi } from './src/server/discord-bridge-api.ts'
 import { chatRt } from './src/server/chat-rt.ts'
+import { holtAccountApi } from './src/server/holt-account-api.ts'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -46,5 +47,5 @@ export default defineConfig({
     cors: false,
     allowedHosts: true,
   },
-  plugins: [chatRuntime(), apiGuard(), discordBridgeApi(), chatRt()],
+  plugins: [chatRuntime(), apiGuard(), discordBridgeApi(), holtAccountApi(), chatRt()],
 })

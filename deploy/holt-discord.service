@@ -1,18 +1,17 @@
 [Unit]
-Description=holt Discord bot (chatbox bridge, /bridge commands, verification gate, /links, /ai)
+Description=holt Discord bot (chat bridge, /bridge; relays platforms' own commands to their hooks)
 After=network-online.target postgresql.service
 Wants=network-online.target
 # One gateway client per bot token. Two would handle every event twice (double-persisted messages,
-# double replies). abulxt shipped this bot as abulxt-discord.service; until abulxt's deploy stops
-# installing it, whichever of the two starts last is the only one running.
+# double replies). abulxt used to ship this bot as abulxt-discord.service: never run both.
 Conflicts=abulxt-discord.service
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/holt
-# Config comes from /opt/holt/config.js, which spreads abulxt's config (the bot shares abulxt's
-# database and Discord application until phase 1). Serves the OAuth verification callback on
-# 127.0.0.1:<discord.port> (8823), proxied by amph's OpenResty as before.
+# Config comes from /opt/holt/config.js (holt's own database and Discord settings). A platform's own
+# Discord features (abulxt: verification, account roles, /links, /ai) run in that platform's service; this
+# bot relays their commands, buttons and home-guild member events to its hook (discord-platform-relay.ts).
 ExecStart=/usr/bin/npm run discord
 Restart=on-failure
 RestartSec=3

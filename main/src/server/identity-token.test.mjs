@@ -69,7 +69,7 @@ test('a token with a jti is accepted once', () => {
 test('a session round-trips its principal and dies at expiry', () => {
   const principal = verifyIdentityToken(signJwt(claims(), SECRET), PLATFORM, NOW)
   const session = issueSession(principal, SECRET, NOW)
-  assert.deepEqual(readSession(session, SECRET, NOW), principal)
+  assert.deepEqual(readSession(session, SECRET, NOW), { ...principal, discordId: null, admin: false })
   assert.equal(readSession(session, SECRET, NOW + 13 * 3600 * 1000), null)
   assert.equal(readSession(session, 'other'.repeat(8), NOW), null)
   // An identity token is not a session, even under the right secret.

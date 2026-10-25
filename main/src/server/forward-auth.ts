@@ -23,6 +23,7 @@ const SIGNED_IN_TTL_MS = 30_000
 const SIGNED_OUT_TTL_MS = 10_000
 const MAX_CACHE_ENTRIES = 10_000
 const SUBJECT = /^[A-Za-z0-9._-]{1,128}$/
+const SNOWFLAKE = /^\d{15,22}$/
 const NAME_MAX = 80
 /** RFC 6750 token68 characters only: nothing that could split or extend the header. */
 const BEARER = /^Bearer [A-Za-z0-9._~+/-]{8,1024}=*$/
@@ -100,13 +101,28 @@ export function principalFromUserState(platform: Platform, config: UserStateConf
       if (url.protocol === 'https:') avatar = url.href
     } catch { /* not a URL: no avatar */ }
   }
+  // A trusted platform also vouches for the user's linked Discord account, site-admin status and chat name.
+  let discordId: string | null = null
+  let admin = false
+  let displayName = ''
+  if (platform.trusted) {
+    const rawDiscord = at(body, config.fields.discordId)
+    const did = typeof rawDiscord === 'number' ? String(rawDiscord) : rawDiscord
+    if (typeof did === 'string' && SNOWFLAKE.test(did)) discordId = did
+    admin = at(body, config.fields.admin) === true
+    const rawDisplay = at(body, config.fields.displayName)
+    displayName = typeof rawDisplay === 'string' ? rawDisplay.trim().slice(0, NAME_MAX) : ''
+  }
   return {
     key: `${platform.identityNamespace}:${id}`,
     platformId: platform.id,
-    name: name || id,
+    name: displayName || name || id,
     emailVerified: verifiedAt(body, config.fields.emailVerified),
-    avatar,
+    // Only a trusted platform's avatar is shown or sent to Discord: it moderates its own uploads; holt has no
+    // moderation path for an arbitrary partner's image URLs.
+    avatar: platform.trusted ? avatar : null,
     tier: null,
+    ...(platform.trusted ? { discordId, admin } : {}),
   }
 }
 

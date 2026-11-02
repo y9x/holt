@@ -35,6 +35,7 @@
 //   POST /api/session                 { platform, token } -> { session, expiresAt, principal, links }
 //                                     Origin must be one of the platform's allowedOrigins.
 //   GET  /api/me                      Bearer session -> { principal, links }
+//   GET  /avatars/<sha256>.webp       A partner user's avatar, once holt checked it (partner-avatars.ts).
 
 import http from 'node:http'
 import { createHash } from 'node:crypto'
@@ -333,6 +334,14 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     response.setHeader('Content-Security-Policy', embedCsp(platform, shell, 'iframe'))
     response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
     return sendText(response, 200, 'text/html; charset=utf-8', pageHtml(shell, platform, 'iframe'))
+  }
+
+  // Checked partner avatars (partner-avatars.ts), approved ones only. Public: pages on any platform and Discord's
+  // media proxy load them by this absolute URL.
+  const avatar = /^\/avatars\/([0-9a-f]{64})\.webp$/.exec(url.pathname)
+  if (avatar) {
+    if (method !== 'GET' && method !== 'HEAD') return sendText(response, 405, 'text/plain; charset=utf-8', 'method not allowed')
+    return proxyChatApi(request, response, `/api/holt-avatars/${avatar[1]}.webp`, { authorization: undefined, cookie: undefined })
   }
 
   // A platform's own push (abulxt: an account's link, name, avatar or admin flag changed, or it was deleted).

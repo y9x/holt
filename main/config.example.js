@@ -74,6 +74,13 @@ export default {
   // granted from a platform token. (Chat site-admin comes from a trusted platform's `admin` field.)
   admins: [],
 
+  // Partner avatars (src/server/partner-avatars.ts): holt fetches an untrusted platform's avatar URLs, checks
+  // them with this model and serves approved copies at <publicOrigin>/avatars/. An OpenAI-compatible
+  // chat-completions endpoint with a vision model. Unset: partner users keep the default avatar.
+  avatars: {
+    moderation: { baseUrl: 'http://127.0.0.1:8317/v1', apiKey: 'CHANGE_ME', model: 'kimi-k3.1-pro-highspeed', timeoutMs: 60000 },
+  },
+
   // Platforms: the sites that may embed holt and vouch for their own users.
   //
   //   id                 Slug. Also the default identity namespace.

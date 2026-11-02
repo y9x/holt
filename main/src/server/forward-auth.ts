@@ -97,7 +97,8 @@ export function principalFromUserState(platform: Platform, config: UserStateConf
   const rawAvatar = at(body, config.fields.avatar)
   if (typeof rawAvatar === 'string') {
     try {
-      const url = new URL(rawAvatar)
+      // A path (`/uploads/me.png`) is on the platform's own site: resolved against its user-state URL.
+      const url = new URL(rawAvatar, config.url)
       if (url.protocol === 'https:') avatar = url.href
     } catch { /* not a URL: no avatar */ }
   }
@@ -118,9 +119,10 @@ export function principalFromUserState(platform: Platform, config: UserStateConf
     platformId: platform.id,
     name: displayName || name || id,
     emailVerified: verifiedAt(body, config.fields.emailVerified),
-    // Only a trusted platform's avatar is shown or sent to Discord: it moderates its own uploads; holt has no
-    // moderation path for an arbitrary partner's image URLs.
+    // Only a trusted platform's avatar is shown or sent to Discord as-is: it moderates its own uploads. A
+    // partner's goes through holt's own check first (partner-avatars.ts, in holt-chat).
     avatar: platform.trusted ? avatar : null,
+    ...(!platform.trusted && avatar ? { avatarSource: avatar } : {}),
     tier: null,
     ...(platform.trusted ? { discordId, admin } : {}),
   }

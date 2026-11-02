@@ -46,7 +46,7 @@ Open `https://your-site/chat/`. That's it.
 
 Only `id` (a stable account id, not the username) and `username` are needed. Field names are
 configurable, including nested ones (`user.id`), if your endpoint already returns a different shape.
-`email_verified: true` lets the user post; `avatar` must be https.
+`email_verified: true` lets the user post; `avatar` must be https or a path on your site (see Avatars below).
 
 ## Tell us
 
@@ -94,7 +94,13 @@ only to your endpoint, never to the chat service. Signing out on your site signs
 few minutes (at once in other tabs if your login lives in localStorage).
 
 Posting needs `email_verified: true` (or your equivalent field). Profiles show the name your endpoint
-returns; avatars are Discord's defaults for now.
+returns.
+
+**Avatars.** Return the user's avatar in `avatar` (an https URL, or a path on your site such as
+`/uploads/me.png`; PNG, JPEG, WebP or GIF, up to 5 MB). holt fetches it itself, checks it with an AI image
+model for anything not fine for an all-ages chat, and shows its own 256px copy, on your site and on Discord.
+A new avatar shows a few seconds after the user's next page load; until it passes (or if it does not), the
+user has a default avatar. holt re-checks the URL daily, so a changed image goes through the same check.
 
 ## Can't proxy? Iframe embedding
 

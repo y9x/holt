@@ -11,7 +11,8 @@
 //   jti             Optional. A token with a jti is accepted once.
 //   name            Display name. Required.
 //   email_verified  Boolean. Composing is gated on it, as in abulxt today. Default false.
-//   avatar          Optional https URL.
+//   avatar          Optional https URL. A trusted platform's is shown as-is; anyone else's only after holt
+//                   checks it (partner-avatars.ts).
 //   tier            Optional slug the platform defines (for example "king-proxy"). Mapped to chat
 //                   roles per platform later; carried through for now.
 //
@@ -26,7 +27,13 @@ export interface Principal {
   platformId: string
   name: string
   emailVerified: boolean
+  /** An avatar holt may show as-is: a trusted platform's (it moderates its own uploads). */
   avatar: string | null
+  /**
+   * A partner's (untrusted platform's) avatar URL. Never shown itself: holt-chat shows holt's checked copy of
+   * it once that passes (partner-avatars.ts). Absent when there is none.
+   */
+  avatarSource?: string | null
   tier: string | null
   /**
    * Vouched for by a trusted platform only (platforms.ts `trusted`), never from an identity token: the
@@ -111,5 +118,10 @@ export function verifyIdentityToken(token: string, platform: Platform, nowMs = D
     seenJti.set(scoped, exp)
   }
 
-  return { key: `${platform.identityNamespace}:${sub}`, platformId: platform.id, name, emailVerified, avatar, tier }
+  return {
+    key: `${platform.identityNamespace}:${sub}`, platformId: platform.id, name, emailVerified,
+    avatar: platform.trusted ? avatar : null,
+    ...(!platform.trusted && avatar ? { avatarSource: avatar } : {}),
+    tier,
+  }
 }

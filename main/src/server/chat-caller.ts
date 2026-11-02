@@ -15,6 +15,7 @@ import { clientIp, guestOwnerKey } from './identity.js'
 import { webIdentityKey } from './chat-identity-key.ts'
 import { touchIdentity } from './identity-directory.ts'
 import type { Principal } from './identity-token.ts'
+import { moderatedAvatarUrl } from './partner-avatars.ts'
 
 export interface ChatUser {
   /** `<namespace>:<subject>`: author key, onboarding key, ban/timeout/overwrite subject. */
@@ -26,7 +27,7 @@ export interface ChatUser {
   email_verified: boolean
   /** Site admin, vouched for by a trusted platform. Always false for partners. */
   admin: boolean
-  /** Platform-supplied avatar URL (https only), or null. Shown only for trusted platforms (moderated there). */
+  /** Avatar URL (https only), or null: a trusted platform's own, or holt's checked copy of a partner's. */
   avatar: string | null
   /** The user's linked Discord account, vouched for by a trusted platform; null otherwise. */
   discord_id: string | null
@@ -79,6 +80,7 @@ export function readPrincipal(value: string, sessionSecret: string, nowMs = Date
     name: claims.name,
     emailVerified: claims.emailVerified === true,
     avatar: typeof claims.avatar === 'string' ? claims.avatar : null,
+    ...(typeof claims.avatarSource === 'string' ? { avatarSource: claims.avatarSource } : {}),
     tier: typeof claims.tier === 'string' ? claims.tier : null,
     discordId: typeof claims.discordId === 'string' && /^\d{15,22}$/.test(claims.discordId) ? claims.discordId : null,
     admin: claims.admin === true,
@@ -111,6 +113,8 @@ export async function resolveChatIdentity(request: IncomingMessage, sessionSecre
   const principal = readPrincipal(header, sessionSecret)
   const user = principal ? extUserOf(principal) : null
   if (!user) return guest
+  // A partner's avatar: holt's checked copy, or the default while it is unchecked or did not pass.
+  if (!user.avatar && principal?.avatarSource) user.avatar = await moderatedAvatarUrl(principal.avatarSource, user.ext_key)
   touchIdentity(user)
   return { ...guest, ownerKey: user.ext_key, user, isGuest: false }
 }

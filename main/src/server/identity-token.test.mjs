@@ -36,7 +36,7 @@ test('jwt: round trip, tamper, wrong secret, alg none', () => {
 
 test('a valid identity token becomes a namespaced principal', () => {
   const principal = verifyIdentityToken(signJwt(claims({ avatar: 'https://cdn.nocturne.lol/a.webp', tier: 'plus' }), SECRET), PLATFORM, NOW)
-  assert.deepEqual(principal, { key: 'nocturne:u_42', platformId: 'nocturne', name: 'Reed', emailVerified: true, avatar: 'https://cdn.nocturne.lol/a.webp', tier: 'plus' })
+  assert.deepEqual(principal, { key: 'nocturne:u_42', platformId: 'nocturne', name: 'Reed', emailVerified: true, avatar: null, avatarSource: 'https://cdn.nocturne.lol/a.webp', tier: 'plus' })
 })
 
 test('issuer, audience, lifetime and expiry are enforced', () => {

@@ -6,6 +6,7 @@
 //     /api/rt                 realtime (chat-rt.ts)  (WS <platform>/_holt/api/rt)
 //     /api/holt-account/*     Set Status, rail folders (holt-account-api.ts)
 //     /api/holt-platform/*    a platform's pushes, after holt-service checked its hook signature
+//     /api/holt-avatars/*     checked partner avatars (partner-avatars.ts), public at holt's /avatars/
 //
 // Every caller arrives as the principal holt-service signed (chat-caller.ts). The event relay (events.ts)
 // runs here too, so caches and sockets hear what the bot emits.
@@ -20,6 +21,9 @@ import { apiGuard } from './src/server/api-guard.ts'
 import { discordBridgeApi } from './src/server/discord-bridge-api.ts'
 import { chatRt } from './src/server/chat-rt.ts'
 import { holtAccountApi } from './src/server/holt-account-api.ts'
+import { partnerAvatarsApi } from './src/server/partner-avatars-api.ts'
+import { configurePartnerAvatars } from './src/server/partner-avatars.ts'
+import { readModerationProvider } from './src/server/avatar-moderation.ts'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -30,6 +34,12 @@ function chatRuntime(): Plugin {
     async configResolved() {
       const config = await loadConfig()
       configureDatabase(config.db?.url)
+      // config.js is holt's own file: `publicOrigin` is its top-level key, the model is avatars.moderation.
+      const raw = config as unknown as { publicOrigin?: unknown; avatars?: { moderation?: unknown } }
+      configurePartnerAvatars({
+        publicOrigin: typeof raw.publicOrigin === 'string' ? raw.publicOrigin : '',
+        provider: readModerationProvider(raw.avatars?.moderation),
+      })
     },
     configurePreviewServer() {
       void startEventRelay()
@@ -47,5 +57,5 @@ export default defineConfig({
     cors: false,
     allowedHosts: true,
   },
-  plugins: [chatRuntime(), apiGuard(), discordBridgeApi(), holtAccountApi(), chatRt()],
+  plugins: [chatRuntime(), partnerAvatarsApi(), apiGuard(), discordBridgeApi(), holtAccountApi(), chatRt()],
 })

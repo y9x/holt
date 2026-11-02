@@ -394,3 +394,26 @@ DELETE FROM discord_bridge_onboarding_state s WHERE s.identity_key LIKE 'user:%'
   AND EXISTS (SELECT 1 FROM discord_bridge_onboarding_state o WHERE o.guild_id = s.guild_id AND o.identity_key = 'abulxt:' || substring(s.identity_key FROM 6));
 UPDATE discord_bridge_onboarding_state SET identity_key = 'abulxt:' || substring(identity_key FROM 6) WHERE identity_key LIKE 'user:%';
 UPDATE discord_bridge_post SET owner_key = 'abulxt:' || substring(owner_key FROM 6) WHERE owner_key LIKE 'user:%' AND client_id IS NULL;
+
+-- migration: 004_partner_avatars
+-- Partner avatars (src/server/partner-avatars.ts): holt's own checked copy of the avatar an untrusted platform
+-- says its user has. An image is our 256px WebP re-encode, keyed by its hash, with the model's verdict; only
+-- approved ones are served. A source maps a partner's avatar URL to the image last fetched from it.
+CREATE TABLE IF NOT EXISTS partner_avatar_image (
+    sha256 TEXT PRIMARY KEY,
+    bytes BYTEA NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('approved', 'rejected', 'pending')),
+    categories TEXT[] NOT NULL DEFAULT '{}',
+    reason TEXT,
+    model TEXT,
+    raw TEXT,
+    created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    checked TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS partner_avatar_source (
+    url_hash TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    image_sha256 TEXT REFERENCES partner_avatar_image (sha256) ON DELETE SET NULL,
+    error TEXT,
+    checked TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

@@ -15,7 +15,8 @@ going; `VENDOR.md` says what came from abulxt; this file says how to work here.
   structure only. Never print, log, or commit a platform secret or `sessionSecret`.
 - **Platform trust boundary.** A platform vouches for its users. Only a platform marked `trusted` (one the
   operator runs: abulxt, Abstract) may vouch for a linked Discord account, site admin, display name or
-  avatar (forward-auth.ts); partners never can, and an identity token never carries those. holt never
+  avatar (forward-auth.ts); partners never can (a partner's avatar is only ever shown as holt's own AI-checked
+  copy, partner-avatars.ts; never pass its URL to a page or Discord), and an identity token never carries those. holt never
   accepts a token for a platform the page's origin does not belong to, never lets a platform's secret or
   namespace be shared with another account system, and a platform's hook pushes may only name keys in its
   own namespace. Do not widen what a platform can assert without updating `docs/PLAN.md`.

@@ -41,7 +41,7 @@ test.beforeEach(() => { clearUserStateCache(); calls = 0; mode = 'normal' })
 
 test('signed-in cookies become a namespaced principal; numeric ids are kept as strings', async () => {
   const p = platform({ url: `${base}/chat/api/me` })
-  assert.deepEqual(await principalFromPlatform(p, 'sid=s_good; theme=dark'), { key: 'partner:77', platformId: 'partner', name: 'Night Owl', emailVerified: true, avatar: null, tier: null }, 'a partner\'s avatar is never used')
+  assert.deepEqual(await principalFromPlatform(p, 'sid=s_good; theme=dark'), { key: 'partner:77', platformId: 'partner', name: 'Night Owl', emailVerified: true, avatar: null, avatarSource: 'https://cdn.example/a.webp', tier: null }, 'a partner\'s avatar is only a source for holt\'s check')
 })
 
 test('no cookies, unknown cookies, or a 401 mean signed out', async () => {

@@ -171,8 +171,13 @@ platform's login changing). abulxt shared code takes `ext_key` (`chat-identity-k
 keys (`authoredBy`): an id comparison would make every ext user the author of every other's messages.
 e2e covers the hand-off (stripped Authorization/Cookie/forged principals, signed principal, realtime, license).
 Decided while building, revisit if wanted:
-- An ext user's avatar is Discord's default: platform-supplied avatar URLs have no moderation path, and
-  only moderated avatars are shown or sent to Discord. (A fetch-and-moderate path is the fix.)
+- ~~An ext user's avatar is Discord's default.~~ Built 2026-11-01: partner avatars are fetched and
+  AI-checked by holt (`server/partner-avatars.ts`, migration 004): forward-auth passes a partner's URL as
+  `principal.avatarSource` (never shown), holt-chat resolves it to holt's approved 256px WebP at
+  `<publicOrigin>/avatars/<sha256>.webp`, or the default while unchecked/pending/rejected. Fetches are https
+  :443 to public addresses only (checked at connect time). Model: `avatars.moderation` (OpenAI-compatible;
+  default `kimi-k3.1-pro-highspeed`, since the relay's Gemini models answer "User location is not supported"
+  from amph; it passed the approve, slur and prompt-injection checks where kimi-k2.8 did not). No manual review queue yet: pending re-checks hourly. Trusted platforms' avatars are unchanged.
 - Set Status, presence dots and server-rail folders are kept for abulxt accounts only (accepted, not stored).
 - Email verification and every account action belong to the platform (`links`); holt only relays the claim.
 - No platform badge yet (F4).
